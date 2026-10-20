@@ -71,7 +71,11 @@ async function main(argv) {
   }
 }
 
-main(process.argv.slice(2)).then(out => { if (out) console.log(out); }, e => {
+// Last guard for raw report text (--json, an import error quoting a broken file): a control character prints as its \u escape,
+// which a terminal shows instead of obeying and which keeps JSON valid and its values unchanged.
+const printable = s => String(s).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
+main(process.argv.slice(2)).then(out => { if (out) console.log(printable(out)); }, e => {
   console.error(e instanceof CliError || e?.code?.startsWith?.('ERR_PARSE_ARGS') ? `bugframe: ${e.message}` : e);
   process.exit(e instanceof CliError || e?.code?.startsWith?.('ERR_PARSE_ARGS') ? 2 : 1);
 });

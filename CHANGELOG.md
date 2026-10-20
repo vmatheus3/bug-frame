@@ -3,6 +3,13 @@
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+- Keep control characters in report text away from the terminal: `list`, `show` and `WORKLIST.md` print them as spaces, and
+  `--json` output and `import` messages as `\u` escapes, so a report cannot recolor, retitle or rewrite the screen. In `show`,
+  every line of a description is indented, so none can pose as a field.
+
 ## [0.2.0] - 2026-10-17
 
 ### Security / breaking changes

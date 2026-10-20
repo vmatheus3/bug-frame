@@ -293,7 +293,8 @@ Startup requires at least one of those settings; public `--client-token` access 
 - Server hardening: ids are validated against one exact pattern before touching the filesystem, only three file names exist,
   uploads must be real PNGs (signature + header), images are served `nosniff` with a locked CSP, tokens are compared in constant
   time, bodies are size-limited while streaming.
-- Reports can be shown to AI agents: treat their text as untrusted input (the supplied prompts say so).
+- Reports can be shown to AI agents: treat their text as untrusted input (the supplied prompts say so). The CLI prints control
+  characters in it as spaces (`\u` escapes with `--json`), so a report cannot recolor, retitle or rewrite your terminal.
 - Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
 Known limits: screenshots are drawn from the DOM (html-to-image), so cross-origin images without CORS headers, `<video>`, `<canvas>`

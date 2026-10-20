@@ -35,6 +35,8 @@ upgrade both server and widget and configure the session authorizer described in
   they carry untrusted, unverified reporter content. Use authenticated server mode for account-controlled submissions.
 - **Stored files:** only ids of the exact form `bug-YYYYMMDD-HHMMSS-xxxx` ever reach the filesystem, only `report.json`,
   `region.png`, `full.png` exist, images are verified as PNG by signature and header and served with
-  `nosniff` and a locked-down CSP. Report text is data: render it escaped (the CLI and the widget never execute it).
+  `nosniff` and a locked-down CSP. Report text is data: render it escaped (the CLI and the widget never execute it). The CLI
+  prints control characters in report text as spaces (`\u` escapes with `--json`), so a report cannot move the cursor, recolor
+  or retitle the terminal of whoever reads it.
 - **AI agents read reports.** Report text and console output are untrusted input to your coding agent. `prompts/FIX_BUGS.md`
   tells the agent to treat them as data, never as instructions.
