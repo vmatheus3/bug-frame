@@ -30,5 +30,6 @@ export const bf = createBugframe({ storage, basePath: '/api/bugframe', authorize
 - **GitHub Issues:** `create()` opens an issue with the description and the context, uploads the pictures to a branch or
   release asset and stores the issue number inside `report.json`; `update()` comments and closes the issue.
 - **SQL:** a table with the JSON in one column and the PNGs in `bytea`/`BLOB` columns.
-- The CLI (`bugframe list/export/close`) works on the folder layout. If you store elsewhere, either sync the folders down
-  (`aws s3 sync s3://bucket/bug-reports ./bug-reports`) or call the server's admin API (`GET /reports?all=1`, `PATCH /reports/:id`).
+- The CLI (`bugframe list/export/close`) works on the folder layout. If you store elsewhere, run it in remote mode
+  (`--remote https://www.example.com/api/bugframe`, see the main README), which goes through the server's admin API
+  (`GET /reports?all=1`, `PATCH /reports/:id`) and so works with any adapter.

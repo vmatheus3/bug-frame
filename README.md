@@ -260,7 +260,7 @@ Storage adapters: implement `create / get / list / update / readFile` ([examples
 ## CLI
 
 ```
-bugframe [--dir ./bug-reports] <command>
+bugframe [--dir ./bug-reports] [--remote URL [--token T]] <command>
   list [--open] [--json]            show [id] [--json]
   export [--all] [--out FILE]       close <id> --note "..." [--status fixed|wontfix]
   reopen <id>                       import <report.zip>
@@ -271,11 +271,33 @@ bugframe [--dir ./bug-reports] <command>
 An auth module exports `authorize(request)` and verifies your existing login. Without a module, only the admin credential is accepted.
 Startup requires at least one of those settings; public `--client-token` access has been removed. `close` writes the note to `report.json`; the server reads it, so the reporter sees it in "My reports".
 
+### Remote mode
+
+When the reports live on a hosted server, run the same commands from your own computer against its API:
+
+```bash
+export BUGFRAME_REMOTE=https://www.example.com/api/bugframe   # the widget's data-endpoint
+export BUGFRAME_REMOTE_TOKEN=...                              # that server's BUGFRAME_ADMIN_TOKEN
+npx bugframe list
+npx bugframe export      # downloads the open reports into ./bug-reports and writes WORKLIST.md
+npx bugframe close <id> --note "Fixed the overlapping footer"
+```
+
+`--remote URL` and `--token T` do the same for one command. `list` (also with `--json`) shows the server's short summaries,
+`close` and `reopen` change the report on the server, and `show` and `export` also save the reports they print into `--dir`, so
+every picture path exists. It uses the server's admin API, so it works with any storage adapter. The token has its own variable,
+so a machine's own `BUGFRAME_ADMIN_TOKEN` never travels to another server. It is only sent over HTTPS (plain HTTP only to
+localhost), redirects are refused, and downloads are checked like imports: exact ids, cleaned fields, real PNG pictures.
+`export` skips a report whose pictures are missing or broken and says so. Downloads never overwrite a report that was not
+downloaded, so keep `--dir` apart from the server's own folder. Closing or reopening a downloaded copy without `--remote` is
+refused, so the note always reaches the reporter. `import` and `serve` work on local folders only.
+
 ## The workflow with an AI coding agent
 
 1. People report problems as they find them (each one is a folder in `bug-reports/`).
 2. When you have a batch: `npx bugframe export` writes `WORKLIST.md`, grouped by page, each item with the person's words, the
-   link, the viewport, the element under the box and the picture paths.
+   link, the viewport, the element under the box and the picture paths. Reports on a hosted server: set `BUGFRAME_REMOTE` and
+   `BUGFRAME_REMOTE_TOKEN` first ([remote mode](#remote-mode)).
 3. Open your coding agent in the project and paste [`prompts/FIX_BUGS.md`](prompts/FIX_BUGS.md) (or the short
    [`FIX_BUGS_SHORT.md`](prompts/FIX_BUGS_SHORT.md)). It looks at the pictures, groups reports by cause, reproduces each at the
    reported size, fixes the root cause, proves it with before/after screenshots, runs the tests and closes every report with a
@@ -327,7 +349,6 @@ reports as plain files that an AI agent can read, with nothing to sign up for.
 
 ## Roadmap
 
-- Remote CLI mode (`--remote https://... --token`) so `export` and `close` work against a hosted server.
 - First-party adapters: S3/R2, GitHub Issues, SQLite.
 - Annotation tools (arrow, pen) on the selected area; optional redo of the region.
 - Optional DOM snapshot and short screen-recording as opt-in extras.

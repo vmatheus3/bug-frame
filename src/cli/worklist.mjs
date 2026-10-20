@@ -4,6 +4,7 @@ const one = s => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 /** The page a report belongs to: path (+ hash route) without origin or query. */
 export function pageOf(r) {
+  if (!r.context && typeof r.page === 'string') return r.page.split('?')[0] || '(unknown page)'; // a server summary (remote list)
   try { const u = new URL(r.context?.url ?? ''); return (u.pathname || '/') + (u.hash && u.hash.length > 1 ? u.hash.split('?')[0] : ''); } catch { return '(unknown page)'; }
 }
 
@@ -26,15 +27,16 @@ export function showText(r, dir) {
 }
 
 /** Build WORKLIST.md: reports grouped by page, with picture paths relative to the worklist file. */
-export function buildWorklist(reports, { dir, out, label = 'open', now = new Date() }) {
+export function buildWorklist(reports, { dir, out, label = 'open', now = new Date(), remote }) {
   const stamp = now.toISOString().slice(0, 16).replace('T', ' ');
   if (!reports.length) return `# Bug work list\n\nNo ${label} bug reports. (${stamp})\n`;
   const groups = new Map();
   for (const r of [...reports].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))) { const k = pageOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
   const rel = (id, f) => relative(dirname(out), join(dir, id, f)).split('\\').join('/');
+  const close = `bugframe ${remote ? `--remote ${remote} ` : ''}close <id> --note "what changed, in plain words"`;
   const o = [`# Bug work list (${reports.length} ${label} across ${groups.size} page${groups.size === 1 ? '' : 's'})`, '',
-    `Generated ${stamp} by \`bugframe export\`. Each item is one person's own words with a picture of the area they marked (open the region picture first), the exact link and the state of the screen. ` +
-    'Fix every item at its root cause, prove it with a before/after picture, then close it with `bugframe close <id> --note "what changed, in plain words"`.', ''];
+    `Generated ${stamp} by \`bugframe export\`${remote ? ` from ${remote}` : ''}. Each item is one person's own words with a picture of the area they marked (open the region picture first), the exact link and the state of the screen. ` +
+    `Fix every item at its root cause, prove it with a before/after picture, then close it with \`${close}\`.`, ''];
   for (const page of [...groups.keys()].sort()) {
     o.push(`## ${page}`, '');
     for (const r of groups.get(page)) {

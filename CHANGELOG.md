@@ -3,6 +3,16 @@
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Remote CLI mode: `--remote URL` (or `BUGFRAME_REMOTE`) runs `list`, `show`, `export`, `close` and `reopen` against a hosted
+  server's admin API, with the admin token from `--token` or `BUGFRAME_REMOTE_TOKEN`. `show` and `export` download the reports
+  they print into `--dir`, and the work list tells the agent to close reports with `--remote`. The token is only sent over HTTPS
+  (plain HTTP only to localhost), redirects are refused, downloads are checked like imports, a report with broken pictures is
+  skipped, downloads never overwrite a report that was not downloaded, and a downloaded copy cannot be closed or reopened
+  locally, where the reporter would never see the note.
+
 ## [0.2.0] - 2026-10-17
 
 ### Security / breaking changes

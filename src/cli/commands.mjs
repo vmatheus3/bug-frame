@@ -9,41 +9,64 @@ export class CliError extends Error {}
 
 export function openStore(dir) { return createFileStorage({ dir }); }
 
-export async function cmdList(dir, { open = false, json = false } = {}) {
-  const rows = (await openStore(dir).list()).filter(r => !open || r.status === 'open');
+const where = (dir, remote) => (remote ? `on ${remote.url}` : `in ${resolve(dir)}`);
+
+/**
+ * close and reopen. In remote mode the server changes (and a downloaded copy follows); locally the folder changes, but never
+ * a downloaded copy: only the server's report reaches the reporter.
+ */
+async function change(dir, id, patch, remote, command) {
+  const local = openStore(dir), from = remote ? null : (await local.get(id))?.downloadedFrom;
+  if (from) throw new CliError(`${id} is a copy downloaded from ${from}. Change it on the server: bugframe --remote ${from} ${command}`);
+  const r = await (remote ?? local).update(id, patch);
+  if (!r) throw new CliError(`No report with id ${id} ${where(dir, remote)}`);
+  if (remote && (await local.get(id))?.downloadedFrom === remote.url) await local.update(id, { status: r.status, note: r.note, closedAt: patch.closedAt });
+}
+
+export async function cmdList(dir, { open = false, json = false, remote } = {}) {
+  const rows = (await (remote ?? openStore(dir)).list()).filter(r => !open || r.status === 'open');
   if (json) return JSON.stringify(rows, null, 2);
   if (!rows.length) return open ? 'No open bug reports.' : 'No bug reports.';
   return rows.map(oneLine).join('\n');
 }
 
-export async function cmdShow(dir, id, { json = false } = {}) {
-  const r = await openStore(dir).get(id);
-  if (!r) throw new CliError(`No report with id ${id} in ${resolve(dir)}`);
+export async function cmdShow(dir, id, { json = false, remote } = {}) {
+  const r = remote ? await remote.download(id, dir) : await openStore(dir).get(id);
+  if (!r) throw new CliError(`No report with id ${id} ${where(dir, remote)}`);
   return json ? JSON.stringify(r, null, 2) : showText(r, resolve(dir));
 }
 
-export async function cmdExport(dir, { all = false, out, now } = {}) {
-  const rows = (await openStore(dir).list()).filter(r => all || r.status === 'open');
+export async function cmdExport(dir, { all = false, out, now, remote } = {}) {
+  let rows = (await (remote ?? openStore(dir)).list()).filter(r => all || r.status === 'open');
+  const skipped = [];
+  if (remote) {
+    const copies = [];
+    for (const { id } of rows) {
+      try { const r = await remote.download(id, dir); if (r && (all || r.status === 'open')) copies.push(r); }
+      catch (e) { if (!e.skip) throw e; skipped.push(e.message); }
+    }
+    rows = copies;
+  }
   const target = resolve(out ?? join(dir, 'WORKLIST.md'));
   await mkdir(join(target, '..'), { recursive: true });
-  const body = buildWorklist(rows, { dir: resolve(dir), out: target, label: all ? 'total' : 'open', now });
+  const body = buildWorklist(rows, { dir: resolve(dir), out: target, label: all ? 'total' : 'open', now, remote: remote?.url });
   await writeFile(target, body);
-  return { path: target, count: rows.length, message: rows.length ? `Wrote ${target}: ${rows.length} report${rows.length === 1 ? '' : 's'}` : `No ${all ? '' : 'open '}bug reports; wrote ${target}` };
+  const from = remote ? ` (downloaded from ${remote.url})` : '', none = `No ${all ? '' : 'open '}bug reports${remote ? ` on ${remote.url}` : ''}; wrote ${target}`;
+  const skip = skipped.length ? `; skipped ${skipped.length} (${skipped.join('; ')})` : '';
+  return { path: target, count: rows.length, skipped, message: (rows.length ? `Wrote ${target}: ${rows.length} report${rows.length === 1 ? '' : 's'}${from}` : none) + skip };
 }
 
-export async function cmdClose(dir, id, { note, status = 'fixed' } = {}) {
+export async function cmdClose(dir, id, { note, status = 'fixed', remote } = {}) {
   if (!note || !String(note).trim()) throw new CliError('close needs --note "what changed"');
   if (!['fixed', 'wontfix'].includes(status)) throw new CliError('--status must be fixed or wontfix');
   if (!ID_RE.test(id)) throw new CliError(`Not a report id: ${id}`);
-  const r = await openStore(dir).update(id, { status, note: text(note, 2000), closedAt: new Date().toISOString() });
-  if (!r) throw new CliError(`No report with id ${id} in ${resolve(dir)}`);
+  await change(dir, id, { status, note: text(note, 2000), closedAt: new Date().toISOString() }, remote, `close ${id} --note "..."`);
   return `${id} marked ${status}`;
 }
 
-export async function cmdReopen(dir, id) {
+export async function cmdReopen(dir, id, { remote } = {}) {
   if (!ID_RE.test(id)) throw new CliError(`Not a report id: ${id}`);
-  const r = await openStore(dir).update(id, { status: 'open', closedAt: null });
-  if (!r) throw new CliError(`No report with id ${id} in ${resolve(dir)}`);
+  await change(dir, id, { status: 'open', closedAt: null }, remote, `reopen ${id}`);
   return `${id} reopened`;
 }
 

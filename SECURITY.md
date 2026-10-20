@@ -30,7 +30,9 @@ upgrade both server and widget and configure the session authorizer described in
   Recheck current account permissions rather than trusting a client-supplied role. Destroy the widget on logout/account switches
   to discard previews already loaded in the browser; server requests are denied immediately once session verification rejects them.
 - **Admin actions** (closing reports, listing everyone's reports) require a verified admin principal or
-  `Authorization: Bearer <adminToken>` (compared in constant time). Never put the admin token in browser code.
+  `Authorization: Bearer <adminToken>` (compared in constant time). Never put the admin token in browser code. The CLI's
+  remote mode sends it only over HTTPS (plain HTTP only to localhost), never follows redirects, and checks downloaded reports
+  like imports (exact ids, cleaned fields, real PNGs).
 - **Local ZIP downloads** are files, not authorized server submissions. Only a local operator can import them with the CLI;
   they carry untrusted, unverified reporter content. Use authenticated server mode for account-controlled submissions.
 - **Stored files:** only ids of the exact form `bug-YYYYMMDD-HHMMSS-xxxx` ever reach the filesystem, only `report.json`,
