@@ -79,7 +79,7 @@ const server = createServer(async (req, res) => {
         ? '<form action="/logout" method="post"><button type="submit">Sign out</button></form><p><a href="/bugs/review">My requests</a> · <a href="/bugs/">Developer inbox</a></p>'
         : '<p><a href="/login">Sign in as an approved tester</a> to report a problem.</p>')
         .replace('<!-- BUGFRAME_WIDGET -->', approved
-          ? '<script src="/bugframe.min.js" data-autoinit data-endpoint="/api/bugframe" data-avoid="#chat" data-capture-console="true"></script>' : '');
+          ? '<script src="/bugframe.min.js" data-autoinit data-endpoint="/api/bugframe" data-login-url="/login" data-avoid="#chat" data-capture-console="true"></script>' : '');
     }
     res.setHeader('content-type', hit[1]); res.end(content);
   } catch { res.writeHead(500); res.end('Run `npm run build` first.'); }

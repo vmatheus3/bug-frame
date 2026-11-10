@@ -14,7 +14,7 @@ for (const status of [401, 403, 413, 429, 500, 'offline'] as const) {
     const downloads: string[] = []; page.on('download', download => downloads.push(download.suggestedFilename()));
     await page.goto('/strict-demo?bugs=1');
     await page.locator('.fab').click(); await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
-    await page.getByRole('button', { name: 'Whole screen' }).click();
+    await page.getByRole('button', { name: 'Pick a spot' }).click(); await page.getByRole('button', { name: 'Whole screen' }).click();
     await page.locator('textarea').fill('Preserve this report after a failure');
     await page.locator('.send').click();
     await expect(page.getByRole('alert')).toBeVisible();

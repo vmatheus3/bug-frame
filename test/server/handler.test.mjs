@@ -7,7 +7,7 @@ import { body, cleanup, PNG_URL, post, tmpDir } from '../helpers.mjs';
 
 const U = 'https://app.test/api/bugframe';
 // Non-auth tests run with an explicitly approved fixture account. Auth denial is covered in auth.test.mjs.
-const fresh = async (opts = {}) => { const dir = await tmpDir(); const bf = createBugframe({ dir, basePath: '/api/bugframe', rateLimit: false, authorize: () => ({ id: 'fixture-user', role: 'client' }), ...opts }); return { dir, bf, done: () => cleanup(dir) }; };
+const fresh = async (opts = {}) => { const dir = await tmpDir(); const bf = createBugframe({ dir, basePath: '/api/bugframe', rateLimit: false, authorize: () => ({ id: 'fixture-user', role: 'client' }), ...opts }); return { dir, bf, done: async () => { await bf.close(); await cleanup(dir); } }; };
 const get = (url, headers = {}) => new Request(url, { headers });
 
 test('creates a report folder with report.json, region.png and full.png', async () => {
@@ -270,4 +270,43 @@ test('invitation access survives a restart but expires and still depends on a li
     if (process.platform !== 'win32') { assert.equal((await stat(file)).mode & 0o777, 0o600); assert.equal((await stat(join(dir, '.invitations'))).mode & 0o777, 0o700); }
     assert.ok(!(await readFile(file, 'utf8')).includes(invitation.token));
   } finally { await cleanup(dir); }
+});
+
+test('agent notifications survive restart, retry with the same event id, and expose only admin delivery status', async () => {
+  const dir = await tmpDir(); let time = new Date('2026-11-09T12:00:00Z'), delivered = false;
+  const calls = [], options = { dir, basePath: '/api/bugframe', rateLimit: false, adminToken: 'admin', authorize: () => ({ id: 'client', role: 'client' }), now: () => time, webhook: { url: 'https://agent.example.test/hook', secret: 'signed-fixture' }, fetch: async (url, options) => { calls.push({ url, options }); return new Response('', { status: delivered ? 200 : 503 }); } };
+  let bf;
+  try {
+    bf = createBugframe(options); const res = await bf.handle(post(`${U}/reports`, body())); assert.equal(res.status, 201); const { id } = await res.json();
+    await bf.notifications.flush(); const stored = await bf.storage.get(id); assert.equal(stored.delivery.status, 'retrying'); const firstId = stored.delivery.eventId; await bf.close();
+    time = new Date(time.getTime() + 2000); delivered = true; bf = createBugframe(options); await bf.notifications.flush();
+    const after = await bf.storage.get(id); assert.equal(after.delivery.status, 'delivered'); assert.equal(after.delivery.eventId, firstId); assert.equal(after.delivery.attempts, 2);
+    assert.equal(calls[0].options.headers['idempotency-key'], calls[1].options.headers['idempotency-key']); assert.equal(calls[1].options.redirect, 'error');
+    const { createHmac } = await import('node:crypto'); assert.equal(calls[1].options.headers['x-bugframe-signature'], 'sha256=' + createHmac('sha256', 'signed-fixture').update(calls[1].options.body).digest('hex'));
+    assert.equal((await bf.handle(new Request(`${U}/agent`))).status, 403);
+    const status = await (await bf.handle(new Request(`${U}/agent`, { headers: { authorization: 'Bearer admin' } }))).json(); assert.equal(status.delivered, 1); assert.equal(status.pending, 0); assert.ok(!JSON.stringify(status).includes('signed-fixture'));
+  } finally { await bf?.close(); await cleanup(dir); }
+});
+
+test('Codex heartbeat is admin-only and expires without granting report access', async () => {
+  let time = new Date('2026-11-09T12:00:00Z');
+  const bf = createBugframe({ storage: createMemoryStorage(), basePath: '/api/bugframe', adminToken: 'admin', now: () => time });
+  const ping = () => bf.handle(post(`${U}/agent/heartbeat`, { intervalMs: 5000, threadId: 'inbox-fixture' }, { authorization: 'Bearer admin' }));
+  assert.equal((await bf.handle(post(`${U}/agent/heartbeat`, { intervalMs: 5000 }))).status, 401); assert.equal((await ping()).status, 200);
+  const status = async () => (await bf.handle(new Request(`${U}/agent`, { headers: { authorization: 'Bearer admin' } }))).json();
+  assert.equal((await status()).codex.connected, true); time = new Date(time.getTime() + 30000); assert.equal((await status()).codex.connected, false);
+  assert.equal((await bf.handle(post(`${U}/reports`, body()))).status, 401); await bf.close();
+});
+
+test('exhausted webhook deliveries can be retried without changing request status', async () => {
+  let time = new Date('2026-11-09T12:00:00Z'), deliver = false;
+  const bf = createBugframe({ storage: createMemoryStorage(), basePath: '/api/bugframe', rateLimit: false, adminToken: 'admin', now: () => time, webhook: { url: 'https://agent.example.test/hook' }, fetch: async () => new Response('', { status: deliver ? 200 : 503 }) });
+  try {
+    const { id } = await (await bf.handle(post(`${U}/reports`, body(), { authorization: 'Bearer admin' }))).json();
+    for (let count = 0; count < 8; count++) { await bf.notifications.flush(); time = new Date(time.getTime() + 300001); }
+    assert.equal((await bf.storage.get(id)).delivery.status, 'failed');
+    assert.equal((await bf.storage.get(id)).status, 'open'); deliver = true;
+    assert.equal((await bf.handle(post(`${U}/agent/retry`, {}, { authorization: 'Bearer admin' }))).status, 200);
+    await bf.notifications.flush(); assert.equal((await bf.storage.get(id)).delivery.status, 'delivered');
+  } finally { await bf.close(); }
 });

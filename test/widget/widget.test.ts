@@ -17,9 +17,7 @@ beforeEach(() => { reset(); (HTMLElement.prototype as unknown as { setPointerCap
 afterEach(() => { inst?.destroy(); inst = null; });
 
 async function toSheet(o: InitOptions = {}) {
-  make(o); click('.fab'); click('.menu .main'); await flush();
-  expect(q('.layer')).toBeTruthy();
-  click('.bar .primary'); await flush();
+  make(o); click('.feedback-start'); await flush();
   expect(q('.sheet')).toBeTruthy();
 }
 
@@ -47,7 +45,7 @@ describe('mounting', () => {
     const chat = document.getElementById('chat')!; chat.getBoundingClientRect = () => ({ left: window.innerWidth - 70, right: window.innerWidth - 10, top: window.innerHeight - 70, bottom: window.innerHeight - 10, width: 60, height: 60, x: 0, y: 0, toJSON() {} });
     make({ avoid: ['#chat'] }); expect(parseInt(q('.fab-wrap')!.style.getPropertyValue('--bf-ey'))).toBeGreaterThan(40);
   });
-  it('uses the localized strings', () => { make({ locale: 'pt' }); expect(q('.bf')!.getAttribute('lang')).toBe('pt'); expect(q('.fab')!.getAttribute('aria-label')).toBe('Deixar feedback'); });
+  it('uses the localized strings', () => { make({ locale: 'pt' }); expect(q('.bf')!.getAttribute('lang')).toBe('pt'); expect(q('.fab')!.getAttribute('aria-label')).toBe('Meus pedidos'); expect(q('.feedback-start')!.textContent).toContain('Deixar feedback'); });
 });
 
 describe('accessibility', () => {
@@ -60,11 +58,10 @@ describe('accessibility', () => {
     await toSheet({ types: ['A'] });
     const sheet = q('.sheet')!; expect(sheet.getAttribute('role')).toBe('dialog'); expect(sheet.getAttribute('aria-modal')).toBe('true'); expect(q('#bf-title')).toBeTruthy();
     expect(q('[role=status]')).toBeTruthy(); expect(q('label')!.getAttribute('for')).toBe('bf-text');
-    const items = Array.from(sheet.querySelectorAll<HTMLElement>('button:not([disabled]), textarea'));
-    items[items.length - 1].focus();
-    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }); items[items.length - 1].dispatchEvent(tab);
-    expect(tab.defaultPrevented).toBe(true); expect(shadow().activeElement).toBe(items[0]);
-    sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.sheet')).toBeNull(); expect(q('.fab')).toBeTruthy();
+    const last = q('.extras summary')!; last.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }); last.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true); expect(shadow().activeElement).toBe(q('.x'));
+    sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.sheet')).toBeNull(); expect(q('.feedback-start')).toBeTruthy();
   });
   it('type chips expose pressed state', async () => {
     await toSheet({ types: ['One', 'Two'] });
@@ -72,24 +69,25 @@ describe('accessibility', () => {
   });
   it('types: [] hides the chips', async () => { await toSheet({ types: [] }); expect(q('.chips:not(.kinds)')).toBeNull(); expect(q('.kinds')).toBeTruthy(); });
   it('region can be chosen from the keyboard', async () => {
-    make(); click('.fab'); click('.menu .main'); await flush();
+    make({ selection: 'area' }); click('.feedback-start'); await flush();
     const layer = q('.layer')!; layer.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); expect(q('.rect')!.style.display).toBe('block');
     layer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await flush(); expect(q('.sheet')).toBeTruthy();
   });
 });
 
 describe('selecting a region', () => {
-  it('a drag draws a box and opens the sheet; a tiny drag asks for a bigger one', async () => {
-    make(); click('.fab'); click('.menu .main'); await flush();
+  it('a drag draws a box and a tap selects a usable area without a precise drag', async () => {
+    make({ selection: 'area' }); click('.feedback-start'); await flush();
     const layer = q('.layer')!;
     pointer(layer, 'pointerdown', 10, 10); pointer(layer, 'pointermove', 15, 15); pointer(layer, 'pointerup', 15, 15);
-    expect(q('.bar span')!.textContent).toMatch(/bigger area/); expect(q('.sheet')).toBeNull();
-    pointer(layer, 'pointerdown', 20, 30); pointer(layer, 'pointermove', 220, 180); expect(q('.rect')!.style.width).toBe('200px'); pointer(layer, 'pointerup', 220, 180); await flush();
+    await flush(); expect(q('.sheet')).toBeTruthy(); click('.preview-row .link');
+    const nextLayer = q('.layer')!;
+    pointer(nextLayer, 'pointerdown', 20, 30); pointer(nextLayer, 'pointermove', 220, 180); expect(q('.rect')!.style.width).toBe('200px'); pointer(nextLayer, 'pointerup', 220, 180); await flush();
     expect(q('.sheet')).toBeTruthy(); expect(q<HTMLImageElement>('.preview')!.src).toContain('data:image/png');
   });
   it('Cancel and Escape leave without sending', async () => {
-    make(); click('.fab'); click('.menu .main'); await flush(); click('.bar button:last-child'); expect(q('.layer')).toBeNull();
-    click('.fab'); click('.menu .main'); await flush(); q('.layer')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.layer')).toBeNull();
+    make({ selection: 'area' }); click('.feedback-start'); await flush(); click('.bar button:last-child'); expect(q('.layer')).toBeNull();
+    click('.feedback-start'); await flush(); q('.layer')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.layer')).toBeNull();
   });
   it('a capture failure shows a message and no layer', async () => {
     const onError = vi.fn(); make({ captureFn: async () => { throw new Error('nope'); }, onError }); click('.fab'); click('.menu .main'); await flush();
@@ -188,7 +186,7 @@ describe('my reports', () => {
     fab.click(); const action = q('.menu .main')!;
     finish(jsonRes({ reports: [] })); await flush();
     expect(q('.menu .main')).toBe(action);
-    action.click(); await flush(); expect(q('.layer')).toBeTruthy();
+    action.click(); await flush(); expect(q('.sheet')).toBeTruthy();
   });
   it('lists status and fix note, counts open ones, and offers turning the tool off', async () => {
     const reports = [

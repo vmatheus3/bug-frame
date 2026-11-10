@@ -4,7 +4,11 @@ const config = JSON.parse(document.body.dataset.config);
 const { apiBase, customer, basePath, siteUrl, invitations } = config;
 const ui = languageUI(config), t = (key, values) => ui.t(key, values);
 $('invitations-panel').hidden = customer || !invitations;
-let selectedId, selectedReport, rows = [], invitationRows = [], createdInvitation, lastMessage, generation = 0;
+$('agent-panel').hidden = customer;
+document.body.dataset.view = customer ? 'customer' : 'developer';
+const quote = value => "'" + value.replace(/'/g, "'\"'\"'") + "'";
+$('agent-command').value = `npx bugframe connect codex --remote ${quote(location.origin + apiBase)} --project .${location.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? ' --allow-localhost' : ''}`;
+let selectedId, selectedReport, rows = [], invitationRows = [], createdInvitation, lastMessage, agentStatus, generation = 0;
 const images = new Map();
 const statusKey = { open: 'open', reviewed: 'reviewed', in_progress: 'inProgress', ready_for_review: 'ready', changes_requested: 'changesRequested', approved: 'approved', fixed: 'fixed', wontfix: 'notPlanned' };
 const statusName = value => t(statusKey[value] ?? 'feedback');
@@ -20,7 +24,8 @@ const releaseImages = () => {
   for (const name of ['region', 'full']) { $(name).removeAttribute('src'); $(name).hidden = true; }
 };
 const clearPrivateContent = () => {
-  generation++; selectedId = null; selectedReport = null; rows = []; invitationRows = []; createdInvitation = null; releaseImages(); $('detail').hidden = true; $('reports').replaceChildren();
+  delete document.body.dataset.detailOpen; $('back-to-requests').hidden = true;
+  generation++; agentStatus = null; $('agent-status').textContent = ''; $('delivery-status').textContent = ''; selectedId = null; selectedReport = null; rows = []; invitationRows = []; createdInvitation = null; releaseImages(); $('detail').hidden = true; $('reports').replaceChildren();
   for (const id of ['description', 'info', 'context', 'resolution', 'customer-note', 'current-text', 'suggested-text', 'invite-expiry']) $(id).textContent = '';
   for (const id of ['note', 'adjustment', 'invite-link', 'invite-email']) $(id).value = '';
   $('invitations').replaceChildren(); $('activity').replaceChildren(); $('invite-result').hidden = true;
@@ -42,7 +47,8 @@ function renderRows() {
   $('reports').replaceChildren(); $('empty').hidden = rows.length > 0;
   for (const report of rows) {
     const button = document.createElement('button'); button.type = 'button';
-    button.textContent = `${statusName(report.status)} · ${kindName(report.kind)} — ${report.description}`;
+    const title = document.createElement('strong'), meta = document.createElement('small');
+    title.className = 'request-title'; title.textContent = report.description; meta.className = 'request-meta'; meta.textContent = `${statusName(report.status)} · ${kindName(report.kind)}`; button.append(title, meta);
     button.dataset.reportId = report.id; button.setAttribute('aria-current', String(report.id === selectedId));
     button.addEventListener('click', () => show(report.id).catch(showError));
     const item = document.createElement('li'); item.append(button); $('reports').append(item);
@@ -80,7 +86,7 @@ async function show(id) {
   for (const button of $('reports').querySelectorAll('button')) button.setAttribute('aria-current', String(button.dataset.reportId === id));
   const report = customer ? rows.find(row => row.id === id) : await (await request('/reports/' + encodeURIComponent(id))).json();
   if (!report || selectedId !== id || version !== generation) return;
-  selectedReport = report; $('detail').hidden = false; $('choose').hidden = true;
+  selectedReport = report; document.body.dataset.detailOpen = 'true'; $('back-to-requests').hidden = false; $('detail').hidden = false; $('choose').hidden = true;
   renderReportText(report); $('description').focus();
   const page = safePage(report);
   for (const id of ['page-link', 'review-page']) { $(id).hidden = !page; $(id).removeAttribute('href'); if (page) $(id).href = page; }
@@ -158,13 +164,17 @@ $('invite-form').addEventListener('submit', async event => {
     await loadInvitations();
   } catch (error) { showError(error); } finally { $('create-invite').disabled = false; }
 });
-async function reload() { await refresh(); if (selectedId) await show(selectedId); await loadInvitations(); }
+function renderAgent() { if (!agentStatus) return; $('agent-status').textContent = t(agentStatus.codex?.connected ? 'agentConnected' : 'agentDisconnected'); $('delivery-status').textContent = agentStatus.configured ? t('deliverySummary', agentStatus) : ''; $('retry-notifications').hidden = !agentStatus.failed; }
+async function loadAgent() { if (customer) return; const version = generation; const data = await (await request('/agent')).json(); if (version !== generation) return; agentStatus = data; renderAgent(); }
+$('retry-notifications').addEventListener('click', async () => { $('retry-notifications').disabled = true; try { await request('/agent/retry', { method: 'POST', body: '{}' }); await loadAgent(); } catch (error) { showError(error); } finally { $('retry-notifications').disabled = false; } });
+$('back-to-requests').addEventListener('click', () => { delete document.body.dataset.detailOpen; selectedId = null; selectedReport = null; releaseImages(); $('detail').hidden = true; $('choose').hidden = false; $('back-to-requests').hidden = true; renderRows(); $('reports').querySelector('button')?.focus(); });
+async function reload() { await refresh(); if (selectedId) await show(selectedId); await loadInvitations(); await loadAgent(); }
 $('refresh').addEventListener('click', () => { message(''); void reload().catch(showError); });
 window.addEventListener('pagehide', clearPrivateContent);
 window.addEventListener('pageshow', event => { if (event.persisted) reload().catch(showError); });
 ui.start(() => {
   $('site-link').href = ui.link(siteUrl); renderRows();
   if (selectedReport) renderReportText(selectedReport);
-  renderInvitations(); if (lastMessage) message(lastMessage.key, lastMessage.values);
+  renderInvitations(); renderAgent(); if (lastMessage) message(lastMessage.key, lastMessage.values);
 });
 reload().catch(showError);

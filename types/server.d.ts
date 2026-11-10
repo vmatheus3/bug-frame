@@ -26,6 +26,7 @@ export interface Report {
     consoleErrors: { at: string; message: string }[];
     metadata: Record<string, unknown>;
   };
+  delivery?: { eventId: string; target: string; status: 'pending' | 'retrying' | 'failed' | 'delivered'; attempts: number; nextAttemptAt: string | null; deliveredAt: string | null; lastAttemptAt?: string; lastStatus?: number | null };
   files: { region: string; full: string };
 }
 
@@ -106,7 +107,7 @@ export interface BugframeOptions {
   trustProxy?: boolean;
   /** `false`: "My reports" returns nothing to clients. */
   publicList?: boolean;
-  webhook?: { url: string; secret?: string; includeImages?: boolean; timeoutMs?: number };
+  webhook?: { url: string; secret?: string; includeImages?: boolean; timeoutMs?: number; allowInsecureLocalhost?: boolean };
   onReport?: (report: Report) => void | Promise<void>;
   logger?: (...args: unknown[]) => void;
   fetch?: typeof fetch;
@@ -120,6 +121,9 @@ export interface Bugframe {
   storage: StorageAdapter;
   basePath: string;
   invitationsEnabled: boolean;
+  /** Flushes due notifications; retries are durable with filesystem/persistent report storage. */
+  notifications: { flush(): Promise<void>; status(): Promise<{ configured: boolean; signed?: boolean; pending: number; failed: number; delivered: number; lastDeliveredAt: string | null }>; retry(): Promise<unknown>; close(): Promise<void> };
+  close(): Promise<void>;
 }
 
 export function createBugframe(options: BugframeOptions): Bugframe;

@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml/badge.svg)](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
-[![Download](https://img.shields.io/badge/download-v0.4.1-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.4.1)
+[![Download](https://img.shields.io/badge/download-v0.5.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0)
 
-![Bugframe developer inbox: screenshot evidence, request progress, and a language selector](docs/images/bugframe-overview.png)
+![Simple Bugframe reporting: screenshot added, one message, and send](docs/images/simple-feedback.png)
 
-**Point to anything you want to improve.** Bugframe is a small drop-in website feedback tool for bugs, content changes, design improvements, and new ideas. Customers frame an area, describe the change, and review the result. Developers get screenshots and technical context in a private inbox. Every request includes a screenshot of the marked area, page link, screen size, and element context. Optional console capture adds recent errors for debugging.
+**Point to anything you want to improve.** Bugframe is a small drop-in website feedback tool for bugs, content changes, design improvements, and new ideas. Customers tap **Leave feedback**, write what they want changed, and send. The screenshot is added automatically; picking a spot and extra categories are optional. Developers get screenshots and technical context in a private inbox. Every request includes a screenshot of the marked area, page link, screen size, and element context. Optional console capture adds recent errors for debugging.
 
 **Free and open source, under the MIT license.** Use it in personal or commercial projects, modify it, and share it.
 Run it on your own infrastructure or download reports as ZIP files. No Bugframe account or subscription is required;
@@ -24,10 +24,15 @@ you cover any hosting you choose and any optional AI service you use to fix repo
 
 ## How it works
 
-1. Open your page with `?bugs=1`, click the feedback button, and choose **Leave feedback on this page**.
-2. Frame an area, choose a feedback kind, describe the change, and send it.
-3. Developers review the context, make the agreed change, and mark it ready for customer review.
-4. The original customer chooses **Looks good** or requests an adjustment. Only that customer can approve their request.
+1. Sign in with your usual approved website account. **No extra Bugframe password or code is needed.**
+2. Tap **Leave feedback**. The visible screen is captured automatically.
+3. Write what you want changed and tap **Send feedback**. That is the whole required form.
+4. Use **Pick a spot** to tap an element or drag a box when needed. Categories and wording fields live under **More options**.
+5. Developers review the request, deliver the change, and ask for approval. Customers choose **Looks good** or request an adjustment.
+
+On phones, the send button stays outside the scrolling form and follows the visual viewport when the keyboard opens. Request lists and request details use separate mobile screens with a clear back button. English, Spanish, and Portuguese remain available throughout.
+
+![One-message mobile feedback form](docs/images/mobile-feedback.png)
 
 | 1. Frame anything to improve | 2. Describe the change |
 | --- | --- |
@@ -65,6 +70,43 @@ Customer-written feedback, developer notes, project names, and the reviewed webs
   write a plain-language answer back to the reporter.
 - **Approved users only.** Reporting requires a server-verified login and reporting permission. `?bugs=1` only controls visibility; ordinary visitors cannot authorize themselves.
 
+## Set up with Codex — website login, no extra customer password
+
+Install the package, then generate a private integration starter in your existing website project:
+
+```bash
+npx bugframe setup --site https://your-site.example --project .
+# Or reuse your server-side session verifier directly:
+npx bugframe setup --site https://your-site.example --project . --auth-module ./bugframe-auth.mjs
+```
+
+Ask Codex to follow `.bugframe/AGENT_SETUP.md`. It tells the builder to reuse the actual website session verifier, approved-user permissions, and existing server routes. The generated authorizer denies access until that integration is completed. No public mode or additional customer password is enabled. The older single-owner access-key demonstration remains an explicitly optional development example.
+
+The starter creates private `.bugframe/` files and ignores the folder in Git. Its `credentials.json` is an automatically generated **server/connector credential**, not a code customers type. Keep it out of browser code, prompts, screenshots, and public files. Use your hosting secret store for production credentials and persistent private report storage. Existing setup files are never overwritten.
+
+## New tickets → Codex inbox
+
+Run the following in the website project after installing and signing into the Codex CLI:
+
+```bash
+npx bugframe connect codex \
+  --remote https://your-site.example/api/bugframe \
+  --project . \
+  --credentials .bugframe/credentials.json
+```
+
+Keep the connector running on your computer or an always-on machine. It checks the private API every five seconds and sends short acknowledgments into a dedicated **Bugframe · New requests** Codex inbox. Its first run establishes the current ticket baseline; add `--include-existing` on that first run to include existing requests. Checkpointed new tickets catch up after a normal restart. Temporary API/network failures retry with backoff; invalid credentials or a Codex account/notification failure stop with an actionable error while tickets remain available to retry.
+
+The developer inbox’s **Connect Codex** panel shows whether the connector is still checking in. `--interval 10000` changes the polling interval (3–300 seconds); `--once` checks once. Normal reconnects keep the same inbox and avoid repeating acknowledged tickets. The private checkpoint directory defaults to `~/.config/bugframe/connections` (`--state-dir` overrides it). Run one connector per project/API; after a hard process crash, confirm it is stopped before removing its stale `.lock` file. The reference connector handles up to 10,000 current tickets per project.
+
+Notifications contain validated ticket IDs and canonical feedback kinds. Customer descriptions, screenshots, and server credentials are not pasted into the Codex prompt. Automatic acknowledgment turns use read-only permissions and do not constitute permission to implement a requested change. Open your project coding chat when you want to triage or fix a request. The connector uses the signed-in Codex account and its usage limits; Bugframe itself remains free. It uses the [official Codex App Server protocol](https://developers.openai.com/codex/app-server/) and was checked with CLI 0.162.1. It does not require a separate OpenAI API key.
+
+For explicit local testing only, `--allow-localhost` permits HTTP to `127.0.0.1`, `localhost`, or `[::1]`; hosted connections require HTTPS. No inbound ports, public tunnel, or browser admin credential is required for the connector.
+
+### Optional webhooks for other automation
+
+Existing `webhook: { url, secret }` integrations now keep delivery state with each ticket. Persistent report storage keeps pending notifications across server restarts. Delivery is attempted up to eight times with exponential backoff, then appears as failed in the developer panel with a **Retry failed deliveries** action. The event uses a stable `eventId` and `Idempotency-Key`; receivers must deduplicate because delivery is at least once. The JSON includes a signed `sentAt` timestamp when a secret is configured. Redirects are refused and request errors do not echo secrets. Only reports created while a webhook is configured are queued; changing the endpoint does not silently send old events to a different destination. Custom adapters must preserve the `delivery` field. The webhook and the outbound Codex connector are independent; Codex does not require a webhook.
+
 ## 5-minute quick start
 
 Try the complete widget and server locally with Node.js 20+ (the runtime server/CLI also support 18.17+):
@@ -90,11 +132,11 @@ node src/cli/bin.mjs --dir ./examples/plain-html/reports close <id> --note "Fixe
 
 ### Add it to your own project
 
-Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.4.1).
+Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0).
 This installation does not depend on a package named `bugframe` being published to the npm registry:
 
 ```bash
-npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.4.1/bugframe-0.4.1.tgz
+npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.5.0/bugframe-0.5.0.tgz
 # First connect your server-side login verifier as described under "Access control" below.
 npx bugframe serve --dir ./bug-reports --port 4455 --auth-module ./bugframe-auth.mjs
 ```
@@ -235,10 +277,12 @@ together; existing reports with browser-generated ownership ids remain accessibl
 
 All options are optional except where noted. `init(options)` returns `{ open, close, enable, disable, isEnabled, destroy }`.
 For the script tag, options map to `data-*` attributes (`data-endpoint`, `data-token`, `data-position`, `data-enable`,
-`data-enable-param`, `data-locale`, `data-accent`, `data-capture-console="true"`, `data-types="A,B"`, `data-mask`, `data-exclude`, `data-avoid`, `data-download`, `data-mode="server"`, `data-allow-download-fallback="false"`).
+`data-enable-param`, `data-login-url`, `data-selection`, `data-locale`, `data-accent`, `data-capture-console="true"`, `data-types="A,B"`, `data-mask`, `data-exclude`, `data-avoid`, `data-download`, `data-mode="server"`, `data-allow-download-fallback="false"`).
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| `loginUrl` | none | Same-origin website sign-in path, opened in a new tab after denied access so the draft stays intact. |
+| `selection` | `screen` | Capture the visible screen immediately; `area` starts with the optional area picker. |
 | `endpoint` | none | Base URL of the report API. Without it the widget runs in download mode. |
 | `token` | none | Legacy public widget identifier (`x-bugframe-token`); grants no access. Use verified login sessions on the server. |
 | `mode` | auto | `'server'` requires an endpoint; `'download'` explicitly creates local ZIP files. |
@@ -316,7 +360,7 @@ createServer(toNodeListener(bf)).listen(4455);
 | `rateLimit` | 10 / minute | Separate limits for verified account and IP. In-memory per instance; `false` disables. 429 with `Retry-After`. |
 | `trustProxy` | `false` | Read the IP from `X-Forwarded-For` (only behind a proxy you control). |
 | `publicList` | `true` | `false`: clients see no "My requests". |
-| `webhook` | none | `{ url, secret, includeImages }`: POST `report.created` with `x-bugframe-signature: sha256=<hmac>`. Failures never fail a report. |
+| `webhook` | none | `{ url, secret, includeImages }`: POST `report.created` with `x-bugframe-signature: sha256=<hmac>`. Delivery state is saved with the report; failures retry and never invalidate the saved report. HTTPS is required; explicit allowInsecureLocalhost is available for loopback testing. |
 | `onReport`, `logger` | none | Hooks. |
 
 HTTP routes (relative to `basePath`):
@@ -332,6 +376,9 @@ HTTP routes (relative to `basePath`):
 | `POST /invitations`, `GET /invitations` | admin | Create `{ email, expiresInDays?: 7 }` (1–30 days), or list without secrets. Creation returns a one-use `token` once. |
 | `POST /invitations/accept` | signed-in `user` | `{ token }`; requires a matching verified email. No login session is created. |
 | `PATCH /invitations/:id` | admin | `{ status: "revoked" }`; removes invitation-based access on the next request. |
+| `GET /agent` | admin | Delivery counts and recent Codex connector heartbeat; no credentials or URLs. |
+| `POST /agent/heartbeat` | admin connector | Update server-timestamped listener presence. |
+| `POST /agent/retry` | admin | Retry exhausted webhook deliveries. |
 | `GET /health` | anyone | `{ ok: true }`. |
 | `GET /access` | approved account | `{ role: 'client' \| 'admin' }`; checks existing authorization, creates no session. |
 
@@ -475,3 +522,7 @@ Translations, integration examples, documentation improvements, and fixes are we
 
 MIT, see [LICENSE](LICENSE). Bundles [html-to-image](https://github.com/bubkoo/html-to-image) (MIT), see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Upgrade from 0.4.x to 0.5.0
+
+Upgrade widget and server together. Reporting now starts with an automatic viewport screenshot; use `selection: 'area'` / `data-selection="area"` for the old area-first behavior. Optional fields are under More options, and request history is opened from the secondary list button. Existing website authorization, invitations, reports, and legacy CLI commands remain supported. No extra customer password is required. New Codex presence routes need the updated server. Persistent custom storage must retain webhook `delivery` fields, and non-HTTPS webhook destinations need updating (HTTP loopback requires explicit opt-in).

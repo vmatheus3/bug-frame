@@ -75,3 +75,19 @@ test('serve refuses unconfigured authorization, public-token access and invalid 
     await assert.rejects(() => run(dir, 'serve', '--auth-module', module), /must export an authorize/);
   } finally { await cleanup(dir); }
 });
+
+test('setup uses website accounts with no customer password and preserves existing files', async () => {
+  const { setupProject } = await import('../../src/cli/setup.mjs');
+  const { stat } = await import('node:fs/promises');
+  const dir = await tmpDir();
+  try {
+    const result = await setupProject({ project: dir, site: 'https://example.test' });
+    assert.match(result, /no extra Bugframe password/); assert.match(result, /connect codex/);
+    const credentials = JSON.parse(await readFile(join(dir, '.bugframe/credentials.json'), 'utf8')); assert.match(credentials.adminToken, /^[a-f0-9]{64}$/);
+    assert.ok(!result.includes(credentials.adminToken)); assert.match(await readFile(join(dir, '.bugframe/auth.mjs'), 'utf8'), /return null/);
+    assert.match(await readFile(join(dir, '.gitignore'), 'utf8'), /\.bugframe\//);
+    assert.ok(!(await readFile(join(dir, '.bugframe/AGENT_SETUP.md'), 'utf8')).includes(credentials.adminToken));
+    if (process.platform !== 'win32') assert.equal((await stat(join(dir, '.bugframe/credentials.json'))).mode & 0o777, 0o600);
+    await assert.rejects(() => setupProject({ project: dir, site: 'https://example.test' }), /already exists/);
+  } finally { await cleanup(dir); }
+});

@@ -22,7 +22,7 @@ test('signing out revokes an open report and does not offer a download fallback'
   expect(session.httpOnly).toBe(true); expect(session.sameSite).toBe('Strict');
   await page.locator('.fab').click();
   await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
-  await page.getByRole('button', { name: 'Whole screen' }).click();
+  await page.getByRole('button', { name: 'Pick a spot' }).click(); await page.getByRole('button', { name: 'Whole screen' }).click();
   await page.locator('textarea').fill('Session was revoked');
   const result = await page.request.post('/logout', { headers: { origin: 'http://127.0.0.1:4455' } });
   expect(result.ok()).toBe(true);

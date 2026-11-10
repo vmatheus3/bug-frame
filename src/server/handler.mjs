@@ -1,8 +1,9 @@
 // The report API as a plain fetch handler: (Request) => Promise<Response>. Works in Node 18+, Bun, Deno, Cloudflare Workers
 // (with a custom storage adapter) and behind any framework through the adapters in node.mjs.
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { createFileInvitationStorage, invitationEmail, invitationService } from './invitations.mjs';
+import { createNotifications } from './notifications.mjs';
 import { createFileStorage } from './storage-fs.mjs';
 import { FEEDBACK_KINDS, ID_RE, STATUSES, isOpen, cleanContext, decodePng, newReportId, safeEqual, summarize, text } from './util.mjs';
 
@@ -29,6 +30,7 @@ export function createBugframe(options = {}) {
   if (o.invitations && !invitationStore) throw new Error('Invitations require dir or a dedicated invitation storage adapter.');
   const invites = invitationStore ? invitationService(invitationStore, now) : null;
   const mutations = new Map();
+  let codexConnection = null;
   const serial = (id, operation) => {
     const next = (mutations.get(id) ?? Promise.resolve()).then(operation);
     const tail = next.catch(() => {}); mutations.set(id, tail);
@@ -88,16 +90,7 @@ export function createBugframe(options = {}) {
     try { return { body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }; } catch { return { error: err(400, 'bad_json', 'The body is not valid JSON.') }; }
   }
 
-  async function forward(report, files) {
-    const w = o.webhook; if (!w?.url) return;
-    const payload = { event: 'report.created', report: summarize(report), context: report.context, ...(w.includeImages ? { images: { region: files.region.toString('base64'), full: files.full.toString('base64') } } : {}) };
-    const body = JSON.stringify(payload);
-    const headers = { 'content-type': 'application/json', 'user-agent': 'bugframe-webhook' };
-    if (w.secret) headers['x-bugframe-signature'] = 'sha256=' + createHmac('sha256', w.secret).update(body).digest('hex');
-    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), w.timeoutMs ?? 5000);
-    try { const res = await (o.fetch ?? fetch)(w.url, { method: 'POST', headers, body, signal: ctl.signal }); if (!res.ok) log('webhook', res.status); }
-    catch (e) { log('webhook', String(e?.message ?? e)); } finally { clearTimeout(timer); }
-  }
+  const notifications = createNotifications({ webhook: o.webhook, storage, serial, request: o.fetch ?? fetch, now, logger: log });
 
   // ---- routes
   async function create(req, ctx, who) {
@@ -114,10 +107,11 @@ export function createBugframe(options = {}) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const d = (o.now ?? (() => new Date()))(), id = (o.generateId ?? newReportId)(d);
       report = { id, status: 'open', note: '', createdAt: d.toISOString(), reporter: who.reporter, description, kind, currentText: kind === 'content' ? text(b.currentText, 2000) : '', suggestedText: kind === 'content' ? text(b.suggestedText, 2000) : '', reviewVersion: 0, reviewNote: '', activity: [], types: (Array.isArray(b.types) ? b.types : []).slice(0, 8).map(t => text(t, 40)).filter(Boolean), context: cleanContext(b.context), files: { region: 'region.png', full: 'full.png' } };
+      const delivery = notifications.initial(report); if (delivery) report.delivery = delivery;
       try { await storage.create(report, { region, full }); break; } catch (e) { if (e?.code === 'EXISTS' && attempt < 4) continue; log('store', String(e?.message ?? e)); return err(500, 'store_failed', 'The report could not be saved.'); }
     }
     try { await o.onReport?.(report); } catch (e) { log('onReport', String(e?.message ?? e)); }
-    void forward(report, { region, full });
+    void notifications.wake();
     return json(201, { id: report.id, status: 'open' });
   }
 
@@ -203,7 +197,7 @@ export function createBugframe(options = {}) {
   }
 
   /** True when the URL belongs to this API (so a framework can fall through to its own routes otherwise). */
-  const matches = url => { const u = typeof url === 'string' ? new URL(url, 'http://x') : url; return u.pathname === basePath + '/health' || u.pathname === basePath + '/access' || u.pathname === basePath + '/invitations' || u.pathname.startsWith(basePath + '/invitations/') || u.pathname === basePath + '/reports' || u.pathname.startsWith(basePath + '/reports/'); };
+  const matches = url => { const u = typeof url === 'string' ? new URL(url, 'http://x') : url; return u.pathname === basePath + '/agent' || u.pathname === basePath + '/agent/retry' || u.pathname === basePath + '/agent/heartbeat' || u.pathname === basePath + '/health' || u.pathname === basePath + '/access' || u.pathname === basePath + '/invitations' || u.pathname.startsWith(basePath + '/invitations/') || u.pathname === basePath + '/reports' || u.pathname.startsWith(basePath + '/reports/'); };
 
   async function handle(req, ctx = {}) {
     const url = new URL(req.url), origin = req.headers.get('origin');
@@ -220,6 +214,19 @@ export function createBugframe(options = {}) {
       const who = account?.role === 'user' ? (await invites?.allows(account) ? { ...account, role: 'client' } : null) : account;
       if (!who) return withCors(err(401, 'unauthorized', 'Sign in with an account authorized to leave feedback.'));
       if (path === '/access') return withCors(req.method === 'GET' ? json(200, { role: who.role, ...(invites && who.role === 'admin' ? { invitations: true } : {}) }) : err(405, 'method_not_allowed', 'Not supported.'));
+      if (['/agent', '/agent/retry', '/agent/heartbeat'].includes(path)) {
+        if (who.role !== 'admin') return withCors(err(403, 'forbidden', 'Admin only.'));
+        if (path === '/agent' && req.method === 'GET') return withCors(json(200, { ...await notifications.status(), codex: codexConnection ? { ...codexConnection, connected: now().getTime() - Date.parse(codexConnection.lastSeenAt) < codexConnection.intervalMs * 3 + 10000 } : { connected: false } }));
+        if (path === '/agent/heartbeat' && req.method === 'POST') {
+          const { body, error } = await readJsonBody(req); if (error) return withCors(error);
+          if (body?.disconnect === true) { codexConnection = null; return withCors(json(200, { ok: true })); }
+          const intervalMs = body?.intervalMs;
+          if (!Number.isInteger(intervalMs) || intervalMs < 3000 || intervalMs > 300000 || body?.threadId != null && (typeof body.threadId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(body.threadId))) return withCors(err(400, 'bad_connection', 'Invalid connection metadata.'));
+          codexConnection = { lastSeenAt: now().toISOString(), intervalMs, threadId: body.threadId ?? null }; return withCors(json(200, { ok: true }));
+        }
+        if (path === '/agent/retry' && req.method === 'POST') { const { error } = await readJsonBody(req); if (error) return withCors(error); return withCors(json(200, await notifications.retry())); }
+        return withCors(err(405, 'method_not_allowed', 'Not supported.'));
+      }
       const parts = path.split('/').filter(Boolean); // ['reports', id?, file?]
       if (parts[0] === 'reports') {
         if (parts.length === 1 && req.method === 'POST') return withCors(await create(req, ctx, who));
@@ -237,5 +244,5 @@ export function createBugframe(options = {}) {
     } catch (e) { log('handler', String(e?.stack ?? e)); return withCors(err(500, 'server_error', 'Something went wrong.')); }
   }
 
-  return { handle, matches, storage, basePath, invitationsEnabled: Boolean(invites) };
+  return { handle, matches, storage, basePath, invitationsEnabled: Boolean(invites), notifications, close: () => notifications.close() };
 }

@@ -50,3 +50,11 @@ upgrade both server and widget and configure the session authorizer described in
   tells the agent to treat them as data, never as instructions.
 
 Invitation and access design follows [OWASP authorization guidance](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) and the single-use secret handling principles in the [OWASP token guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+
+## Website login and Codex notifications (0.5.0)
+
+The normal setup reuses the site's real session verifier and explicit approved-user/invitation permission. Customers do not need a separate Bugframe password. Generated auth stubs deny access until wired; `.bugframe/credentials.json` is a private server/connector credential and must never reach website code. Generated setup folders/files use 0700/0600 and are ignored in Git.
+
+The Codex connector makes outbound authenticated requests only. It creates a dedicated notification inbox with read-only acknowledgment turns, passes only validated ticket IDs/canonical kinds, and removes Bugframe credential environment variables from its Codex child. It does not interpret report descriptions as prompts or approve coding actions. State/checkpoint files are private; do not run multiple listeners on the same checkpoint or remove an active lock. Notifications may repeat if a process crashes after Codex acknowledges but before the checkpoint is committed. Keep account limits and shared project trust in mind when enabling automated turns.
+
+Webhook delivery state is saved atomically with the original ticket and retried through the existing instance's mutation queue. HTTPS, redirect refusal, bounded timeouts, optional HMAC signatures over the full timestamped JSON, stable event IDs, and receiver deduplication are required for reliable integrations. Delivery status/heartbeat/retry routes are admin-only and disclose no credential or receiver URL. Heartbeats expire after missed checks; they do not grant customer reporting access. Persistent custom adapters must retain the delivery field; one API writer per project still applies.
