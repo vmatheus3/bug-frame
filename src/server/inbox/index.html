@@ -15,9 +15,10 @@
     <form id="invite-form" novalidate><label for="invite-email" data-i18n="customerEmail">{{T:customerEmail}}</label><input id="invite-email" type="email" maxlength="254" required autocomplete="email"><label for="invite-days" data-i18n="accessDays">{{T:accessDays}}</label><input id="invite-days" type="number" min="1" max="30" value="7" required><button id="create-invite" type="submit" data-i18n="createInvite">{{T:createInvite}}</button></form>
     <p id="invite-result" hidden><label for="invite-link" data-i18n="copyInvite">{{T:copyInvite}}</label><input id="invite-link" type="text" readonly><small id="invite-expiry"></small></p><ul id="invitations"></ul>
   </details>
+  <details id="agent-panel" hidden><summary data-i18n="agentConnection">{{T:agentConnection}}</summary><p data-i18n="agentIntro">{{T:agentIntro}}</p><p id="agent-status" role="status"></p><p data-i18n="agentUsesLogin">{{T:agentUsesLogin}}</p><label for="agent-command" data-i18n="agentCommandLabel">{{T:agentCommandLabel}}</label><input id="agent-command" type="text" readonly><p data-i18n="agentPrivateCredential">{{T:agentPrivateCredential}}</p><p id="delivery-status"></p><button id="retry-notifications" type="button" hidden data-i18n="retryNotifications">{{T:retryNotifications}}</button></details>
   <main>
     <aside aria-labelledby="reports-title"><h2 id="reports-title" data-i18n="reports">{{T:reports}}</h2><p id="empty" data-i18n="empty" hidden>{{T:empty}}</p><ul id="reports"></ul></aside>
-    <section aria-labelledby="description">
+    <section aria-labelledby="description"><button id="back-to-requests" type="button" hidden data-i18n="backRequests">{{T:backRequests}}</button>
       <p id="choose" data-i18n="choose">{{T:choose}}</p>
       <div id="detail" hidden>
         <h2 id="description" tabindex="-1"></h2><p id="info"></p><a id="page-link" target="_blank" rel="noopener noreferrer" hidden data-i18n="openPage">{{T:openPage}}</a>

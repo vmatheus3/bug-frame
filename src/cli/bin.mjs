@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { createBugframe } from '../server/handler.mjs';
 import { toNodeListener } from '../server/node.mjs';
 import { CliError, cmdClose, cmdExport, cmdImport, cmdList, cmdReady, cmdReopen, cmdShow } from './commands.mjs';
+import { setupProject } from './setup.mjs';
+import { connectCodex } from './codex.mjs';
 import { remoteCommand, remoteCredentials } from './remote.mjs';
 
 const HELP = `bugframe - collect visual feedback and hand them to a person or an AI agent
@@ -14,6 +16,10 @@ const HELP = `bugframe - collect visual feedback and hand them to a person or an
 Usage: bugframe [--dir ./bug-reports] <command> [options]
 
 Commands:
+  setup --site https://your-site.example [--project FOLDER] [--auth-module FILE]
+                                       website login, no extra customer password; private Codex setup
+  connect codex --remote HTTPS_API --project FOLDER [--include-existing] [--once]
+                                       notify a dedicated Codex inbox about new requests; keep running
   list [--open] [--json]               one line per report
   show <id> [--json]                   everything recorded for one report
   export [--all] [--out WORKLIST.md]   write the grouped work list (open reports unless --all)
@@ -37,6 +43,7 @@ async function main(argv) {
   const { values, positionals } = parseArgs({
     args: argv, allowPositionals: true, strict: true,
     options: {
+      'allow-localhost': { type: 'boolean' }, site: { type: 'string' }, project: { type: 'string' }, interval: { type: 'string' }, 'state-dir': { type: 'string' }, once: { type: 'boolean' }, 'include-existing': { type: 'boolean' },
       dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, note: { type: 'string' }, status: { type: 'string' },
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
@@ -47,6 +54,14 @@ async function main(argv) {
   if (values.help || !cmd) return HELP;
   const dir = values.dir ?? process.env.BUGFRAME_DIR ?? './bug-reports';
   const need = () => { if (!arg) throw new CliError(`${cmd} needs an id`); return arg; };
+  if (cmd === 'setup') return setupProject({ project: values.project, site: values.site, authModule: values['auth-module'] });
+  if (cmd === 'connect') {
+    if (arg !== 'codex' || !values.remote || values.dir) throw new CliError('Use connect codex --remote HTTPS_API_URL --project PROJECT_FOLDER.');
+    const token = await remoteCredentials(values.credentials), controller = new AbortController();
+    const stop = () => controller.abort(); process.once('SIGINT', stop); process.once('SIGTERM', stop);
+    try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal }); return null; }
+    finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+  }
   if (values.remote) {
     if (values.dir) throw new CliError('--remote and --dir cannot be combined.');
     if (!['list', 'show', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, close, ready and reopen only.');

@@ -1,6 +1,6 @@
 {
   "name": "bugframe",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "packageManager": "npm@10.9.4",
   "description": "Frame anything you want to improve. Open-source website feedback with screenshots, secure customer invitations, developer tools and customer review and approval.",
   "keywords": [

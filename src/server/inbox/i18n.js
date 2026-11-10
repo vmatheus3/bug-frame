@@ -96,7 +96,17 @@ export const LOCALES = {
     "inviteUnavailable": "This invitation is unavailable or does not match your verified email. Ask your developer for help.",
     "inviteReady": "You’re ready. Open the website and frame anything you would like to improve.",
     "notFound": "Not found.",
-    "methodNotAllowed": "Method not allowed."
+    "methodNotAllowed": "Method not allowed.",
+    "backRequests": "Back to requests",
+    "agentConnection": "Connect Codex",
+    "agentIntro": "Get new requests in a dedicated Codex inbox. Keep the connector running on your computer.",
+    "agentUsesLogin": "Customers use their usual website login. No extra Bugframe password.",
+    "agentCommandLabel": "Run this in your project terminal",
+    "agentPrivateCredential": "Use your private server credential for the connector. Keep it out of website code.",
+    "agentConnected": "Codex is listening for new requests.",
+    "agentDisconnected": "Codex is not connected. Run the command below to connect.",
+    "deliverySummary": "Webhook delivery: {pending} waiting · {delivered} delivered · {failed} need retry",
+    "retryNotifications": "Retry failed deliveries"
   },
   "es": {
     "pageTitle": "{name} · Comentarios",
@@ -194,7 +204,17 @@ export const LOCALES = {
     "inviteUnavailable": "Esta invitación no está disponible o no coincide con tu correo verificado. Pide ayuda a tu desarrollador.",
     "inviteReady": "Todo listo. Abre el sitio y marca lo que quieras mejorar.",
     "notFound": "No se encontró.",
-    "methodNotAllowed": "Método no permitido."
+    "methodNotAllowed": "Método no permitido.",
+    "backRequests": "Volver a las solicitudes",
+    "agentConnection": "Conectar Codex",
+    "agentIntro": "Recibe nuevas solicitudes en una bandeja de Codex. Mantén el conector activo en tu computadora.",
+    "agentUsesLogin": "Los clientes usan el inicio de sesión de tu sitio. Sin otra contraseña de Bugframe.",
+    "agentCommandLabel": "Ejecuta esto en la terminal de tu proyecto",
+    "agentPrivateCredential": "Usa la credencial privada del servidor para el conector. No la incluyas en el código del sitio.",
+    "agentConnected": "Codex está esperando nuevas solicitudes.",
+    "agentDisconnected": "Codex no está conectado. Ejecuta el comando de abajo para conectarlo.",
+    "deliverySummary": "Webhook: {pending} pendientes · {delivered} entregadas · {failed} por reintentar",
+    "retryNotifications": "Reintentar entregas fallidas"
   },
   "pt": {
     "pageTitle": "{name} · Feedback",
@@ -292,7 +312,17 @@ export const LOCALES = {
     "inviteUnavailable": "Este convite não está disponível ou não corresponde ao seu e-mail verificado. Peça ajuda ao desenvolvedor.",
     "inviteReady": "Tudo pronto. Abra o site e marque o que você gostaria de melhorar.",
     "notFound": "Não encontrado.",
-    "methodNotAllowed": "Método não permitido."
+    "methodNotAllowed": "Método não permitido.",
+    "backRequests": "Voltar aos pedidos",
+    "agentConnection": "Conectar Codex",
+    "agentIntro": "Receba novos pedidos em uma caixa do Codex. Mantenha o conector em execução no seu computador.",
+    "agentUsesLogin": "Os clientes usam o login do seu site. Sem outra senha do Bugframe.",
+    "agentCommandLabel": "Execute isto no terminal do seu projeto",
+    "agentPrivateCredential": "Use a credencial privada do servidor no conector. Não a inclua no código do site.",
+    "agentConnected": "O Codex está aguardando novos pedidos.",
+    "agentDisconnected": "O Codex não está conectado. Execute o comando abaixo para conectar.",
+    "deliverySummary": "Webhook: {pending} pendentes · {delivered} entregues · {failed} para tentar de novo",
+    "retryNotifications": "Tentar entregas com falha novamente"
   }
 };
 

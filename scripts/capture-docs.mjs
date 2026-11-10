@@ -35,19 +35,22 @@ try {
   const customerContext = await browser.newContext({ viewport: { width: 1440, height: 1040 }, deviceScaleFactor: 1, locale: 'en-US', colorScheme: 'light' });
   const owner = await ownerContext.newPage(), customer = await customerContext.newPage();
   const login = async (page, password) => { await page.goto(origin + '/login'); await page.getByLabel('Demo password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
-  const capture = (page, file) => page.screenshot({ path: join(directory, file), fullPage: true, animations: 'disabled' });
+  const capture = (page, file, fullPage = true) => page.screenshot({ path: join(directory, file), fullPage, animations: 'disabled' });
   await login(owner, ownerPassword); await login(customer, customerPassword);
   const invitation = await (await owner.request.post(origin + '/api/bugframe/invitations', { data: { email: 'customer@example.test' } })).json();
   await customer.goto(`${origin}/bugs/invite?lang=en#token=${invitation.token}`);
   await customer.locator('#accept').waitFor(); await capture(customer, 'customer-invitation.png');
   await customer.locator('#accept').click(); await customer.locator('#next').waitFor();
   await customer.goto(origin + '/review-demo?bugs=1&lang=en');
-  await customer.locator('.fab').click(); await customer.getByRole('menuitem', { name: /Leave feedback/ }).click();
+  await customer.locator('.feedback-start').click();
+  await customer.locator('#bf-text').fill('Could we make this headline clearer?');
+  await capture(customer, 'simple-feedback.png');
+  await customer.getByRole('button', { name: 'Pick a spot' }).click();
   await customer.locator('.layer').waitFor();
   const area = await customer.locator('#review-headline').boundingBox();
   await customer.mouse.move(area.x - 12, area.y - 12); await customer.mouse.down(); await customer.mouse.move(area.x + area.width + 12, area.y + area.height + 12, { steps: 12 });
   await capture(customer, 'frame-the-problem.png'); await customer.mouse.up(); await customer.locator('.sheet').waitFor();
-  await customer.getByRole('button', { name: 'Change text or an image', exact: true }).click();
+  await customer.locator('.extras summary').click(); await customer.getByRole('button', { name: 'Change text or an image', exact: true }).click();
   await customer.locator('#bf-text').fill('Could we make the headline more about our customers?');
   await customer.locator('#bf-currentText').fill('Thoughtful websites. Built together.');
   await customer.locator('#bf-suggestedText').fill('Websites your customers love.');
@@ -72,7 +75,9 @@ try {
   await customer.locator('#language').selectOption('en');
   await customer.locator('#approve').click(); await customer.getByRole('status').filter({ hasText: 'Approved. Thank you!' }).waitFor();
   await capture(customer, 'customer-approved.png');
-  console.log('Updated 8 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await customerContext.storageState(), locale: 'en-US', colorScheme: 'light' });
+  const phone = await phoneContext.newPage(); await phone.goto(origin + '/review-demo?bugs=1&lang=en'); await phone.locator('.feedback-start').click(); await phone.locator('#bf-text').fill('Please make this button easier to see.'); await capture(phone, 'mobile-feedback.png', false); await phoneContext.close();
+  console.log('Updated 10 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
 } finally {
   await browser?.close();
   const exited = new Promise(resolve => server.once('exit', resolve)); server.kill();

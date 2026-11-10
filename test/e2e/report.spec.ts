@@ -25,12 +25,14 @@ async function dragOver(page: Page, selector: string) {
 test('drag a box, describe, send: the report lands on disk and the CLI exports it', async ({ page }) => {
   await openMenu(page);
   await page.getByRole('menuitem', { name: /Leave feedback on this page/ }).click();
-  await expect(page.locator('.layer')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.sheet')).toBeVisible({ timeout: 20_000 });
   await page.evaluate(() => console.error('Demo error before report'));
+  await page.getByRole('button', { name: 'Pick a spot' }).click();
   await dragOver(page, '#total');
   await expect(page.locator('.sheet')).toBeVisible();
   await expect(page.locator('.preview')).toHaveAttribute('src', /^data:image\/png/);
   await page.locator('textarea').fill('The total is wrong, it should be $1,420.00');
+  await page.locator('.extras summary').click();
   await page.getByRole('button', { name: 'Something isn’t working', exact: true }).click();
   const [request] = await Promise.all([page.waitForRequest(r => r.url().endsWith('/api/bugframe/reports') && r.method() === 'POST'), page.locator('.send').click()]);
   await expect(page.locator('.sent')).toBeVisible();
@@ -82,7 +84,7 @@ test('whole screen, and the tool stays off without ?bugs=1', async ({ page }) =>
   await expect(page.locator('[data-bugframe]')).toHaveCount(0);
   await openMenu(page);
   await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
-  await page.getByRole('button', { name: 'Whole screen' }).click();
+  await page.getByRole('button', { name: 'Pick a spot' }).click(); await page.getByRole('button', { name: 'Whole screen' }).click();
   await page.locator('textarea').fill('Everything looks off');
   await page.locator('.send').click();
   await expect(page.locator('.sent')).toBeVisible();
@@ -96,12 +98,13 @@ test('keyboard only: open, pick a region with the arrow keys, type, send', async
   await page.goto('/?bugs=1');
   await page.locator('.fab').focus(); await page.keyboard.press('Enter');
   await page.getByRole('menuitem', { name: /Leave feedback/ }).press('Enter');
+  await page.getByRole('button', { name: 'Pick a spot' }).click();
   await expect(page.locator('.layer')).toBeFocused({ timeout: 20_000 });
   await page.keyboard.press('ArrowRight'); await page.keyboard.press('Enter');
   await expect(page.locator('.sheet')).toBeVisible();
   await page.locator('textarea').fill('Keyboard report'); await page.keyboard.press('Escape');
   await expect(page.locator('.sheet')).toHaveCount(0);
-  await expect(page.locator('.fab')).toBeFocused();
+  await expect(page.locator('.feedback-start')).toBeFocused();
 });
 
 test('download mode: no backend, a .zip is saved and `bugframe import` reads it', async ({ page }) => {
@@ -110,7 +113,7 @@ test('download mode: no backend, a .zip is saved and `bugframe import` reads it'
   await page.locator('.fab').click();
   await expect(page.locator('.menu .list')).toHaveCount(0);
   await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
-  await page.getByRole('button', { name: 'Whole screen' }).click();
+  await page.getByRole('button', { name: 'Pick a spot' }).click(); await page.getByRole('button', { name: 'Whole screen' }).click();
   await page.locator('textarea').fill('Static page problem');
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('.send').click()]);
   const tmp = mkdtempSync(join(tmpdir(), 'bf-e2e-')); const zip = join(tmp, 'r.zip'); await download.saveAs(zip);
@@ -177,8 +180,8 @@ test('developer invites a customer, who suggests a content change, requests an a
     await expect(customer.getByRole('status')).toContainText('You’re ready');
     await customer.getByRole('link', { name: 'Review the website' }).click();
     await customer.locator('.fab').click(); await customer.getByRole('menuitem', { name: /Leave feedback/ }).click();
-    await customer.getByRole('button', { name: 'Whole screen' }).click();
-    await customer.getByRole('button', { name: 'Change text or an image', exact: true }).click();
+    await customer.getByRole('button', { name: 'Pick a spot' }).click(); await customer.getByRole('button', { name: 'Whole screen' }).click();
+    await customer.locator('.extras summary').click(); await customer.getByRole('button', { name: 'Change text or an image', exact: true }).click();
     await customer.getByLabel('What would you like to change?').fill('Please use a friendlier headline');
     await customer.getByLabel('Current wording (optional)').fill('Invoice #4021');
     await customer.getByLabel('Suggested wording (optional)').fill('Your project summary');

@@ -42,6 +42,10 @@ export type Position = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
 export type EnableMode = 'query' | 'storage' | 'always' | 'never' | (() => boolean);
 
 export type Strings = {
+  screenshotAdded: string;
+  moreOptions: string;
+  done: string;
+  signIn: string;
   kindLabel: string;
   kindBug: string;
   kindContent: string;
@@ -102,6 +106,10 @@ export type Strings = {
 export type InitOptions = {
   /** Base URL of the report API (the server's `basePath`), e.g. "/api/bugframe". Omit it for download-only mode. */
   endpoint?: string;
+  /** Same-origin website sign-in path, opened in a new tab after denied access so the draft stays intact. */
+  loginUrl?: string;
+  /** Capture the visible screen immediately (default), or begin with area selection. */
+  selection?: 'screen' | 'area';
   /** Legacy public identifier sent as `x-bugframe-token`. Grants no access; use server-verified login sessions. */
   token?: string;
   /** Without an endpoint the report is downloaded as a .zip. Force it with `mode: 'download'`. */

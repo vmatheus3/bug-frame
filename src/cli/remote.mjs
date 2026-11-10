@@ -26,11 +26,12 @@ export async function remoteCredentials(file, env = process.env) {
   return token;
 }
 
-export async function remoteCommand(command, id, { endpoint, token, timeoutMs = 30000, json = false, open = false, note, status = 'fixed', fetch: request = globalThis.fetch } = {}) {
+export async function remoteCommand(command, id, { endpoint, token, timeoutMs = 30000, json = false, open = false, note, status = 'fixed', allowInsecureLocalhost = false, fetch: request = globalThis.fetch } = {}) {
   if (!['list', 'show', 'close', 'ready', 'reopen'].includes(command)) throw new CliError('Remote mode supports list, show, close, ready and reopen only.');
   let base;
   try { base = new URL(endpoint); } catch { throw new CliError('Use a valid HTTPS remote API URL.'); }
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new CliError('Remote URLs must use HTTPS without embedded credentials, query strings or fragments.');
+  const local = allowInsecureLocalhost && base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
+  if ((!local && base.protocol !== 'https:') || base.username || base.password || base.search || base.hash) throw new CliError('Remote URLs must use HTTPS without embedded credentials, query strings or fragments.');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) throw new CliError('--timeout must be between 1 and 300000 milliseconds.');
   if (typeof token !== 'string' || !token || /[^\x21-\x7e]/.test(token)) throw new CliError('A private admin credential is required.');
   if (command !== 'list' && !ID_RE.test(id ?? '')) throw new CliError('A valid report id is required.');
@@ -48,7 +49,7 @@ export async function remoteCommand(command, id, { endpoint, token, timeoutMs = 
     }
     const response = await request(base.href.replace(/\/$/, '') + route, options);
     if (response.status >= 300 && response.status < 400) throw new CliError('Remote redirects are refused. Use the final HTTPS API URL.');
-    if (!response.ok) throw new CliError(`Remote API returned HTTP ${response.status}. Check access and server availability.`);
+    if (!response.ok) { const error = new CliError(`Remote API returned HTTP ${response.status}. Check access and server availability.`); error.retryable = response.status === 429 || response.status >= 500; throw error; }
     const reader = response.body?.getReader();
     if (!reader) throw new CliError('The remote API returned an empty response.');
     const chunks = []; let size = 0;
@@ -72,6 +73,6 @@ export async function remoteCommand(command, id, { endpoint, token, timeoutMs = 
     return json ? JSON.stringify(result, null, 2) : `${id} ${command === 'reopen' ? 'reopened' : command === 'ready' ? 'ready for customer review' : `marked ${status}`}`;
   } catch (error) {
     if (error instanceof CliError) throw error;
-    throw new CliError(controller.signal.aborted ? 'Remote request timed out.' : 'Remote request failed or returned invalid JSON.');
+    const failure = new CliError(controller.signal.aborted ? 'Remote request timed out.' : 'Remote request failed or returned invalid JSON.'); failure.retryable = !(error instanceof SyntaxError); throw failure;
   } finally { clearTimeout(timer); }
 }

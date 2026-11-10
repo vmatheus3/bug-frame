@@ -30,7 +30,7 @@ jobs:
       - run: npm install --global npm@10.9.4 --ignore-scripts
       - run: npm ci --ignore-scripts
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()

@@ -3,6 +3,21 @@
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-10
+
+### Added
+- Simple reporting: a labeled feedback button, automatic screenshot, one message, and send. Optional spot selection supports taps or dragging; categories and content fields live under More options. All new text supports English, Spanish, and Portuguese.
+- Mobile form layout that keeps send above the virtual keyboard, preserves capture-time viewport metadata, and restores page scrolling after dismissal. Customer/developer requests use clear list/detail screens with a back button on phones.
+- `bugframe setup --site HTTPS_ORIGIN` generates a private, fail-closed integration starter and Codex instructions for reusing the website's verified login. Customers need no extra Bugframe code or password. Private connector credentials are generated automatically and ignored in Git; existing setup files are preserved.
+- `bugframe connect codex --remote HTTPS_API --project FOLDER` runs an outbound listener for new tickets. A dedicated Codex inbox receives read-only acknowledgment turns. Private checkpoints survive normal restarts, temporary API outages retry, and failed notifications remain unacknowledged for reconnect. Ticket descriptions and server credentials stay out of notification prompts.
+- Developer connection status, admin-only heartbeats, durable webhook delivery state, exponential retries, stable event IDs, and manual retry for exhausted deliveries. Report storage provides persistence; receivers must deduplicate at-least-once deliveries.
+
+### Changed / upgrade notes
+- Upgrade widget and server together. Use `selection: 'area'` to retain the old area-first interaction. Existing account/invitation authorization remains required; anonymous reporting stays disabled.
+- Custom storage adapters must preserve `delivery` fields. Webhook destinations require HTTPS without embedded credentials/fragments; HTTP loopback is an explicit testing option. Changing a webhook target does not automatically replay old private events there.
+- Codex CLI sign-in and a running connector are required for notifications; acknowledgment turns use that account's usage limits. Normal code work remains an explicit user task.
+- Add Chromium and WebKit mobile checks, including virtual-viewport keyboard geometry, one-tap reporting, element selection, and mobile request navigation. Refresh documentation images for the simpler interface.
+
 ## [0.4.1] - 2026-10-23
 
 ### Fixed

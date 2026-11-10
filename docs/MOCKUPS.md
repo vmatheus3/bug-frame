@@ -1,9 +1,11 @@
 # Bugframe interface screenshots
 
-These images show the actual Bugframe 0.4.1 interface running in Chromium. They replace the earlier AI-generated mockups; no image generation or image editing is used for the current gallery. The Northstar Studio website, customer account, request, and developer notes are fictional demo content. No live accounts, credentials, invitation secrets, or customer reports appear in the images. Code, documentation, and images are available under the repository’s MIT license.
+These images show the actual Bugframe 0.5.0 interface running in Chromium. They replace the earlier AI-generated mockups; no image generation or image editing is used for the current gallery. The Northstar Studio website, customer account, request, and developer notes are fictional demo content. No live accounts, credentials, invitation secrets, or customer reports appear in the images. Code, documentation, and images are available under the repository’s MIT license.
 
 | File | What it shows |
 | --- | --- |
+| `images/simple-feedback.png` | The default one-message form, with an automatic screenshot and optional extra fields. |
+| `images/mobile-feedback.png` | The same simple reporting flow on a phone-sized touch viewport. |
 | `images/bugframe-overview.png` | Developer inbox with the customer’s content request, original screenshots, progress controls, and technical evidence. |
 | `images/frame-the-problem.png` | A customer frames the homepage headline on the sample website. |
 | `images/describe-and-send.png` | The four feedback kinds and a content request with current and proposed wording. |
@@ -27,6 +29,8 @@ The capture script starts an isolated loopback demo with disposable accounts and
 
 The language screenshots intentionally keep the original English customer text and developer note: UI language changes do not translate or alter user-authored content. The example page is also available at `/review-demo?bugs=1` when running `npm run example`.
 
+![Simple one-message reporting](images/simple-feedback.png)
+![Mobile reporting](images/mobile-feedback.png)
 ![Developer inbox](images/bugframe-overview.png)
 ![Frame an area](images/frame-the-problem.png)
 ![Describe a change](images/describe-and-send.png)
