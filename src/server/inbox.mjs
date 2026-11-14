@@ -22,6 +22,7 @@ export function createInbox({ bugframe, basePath = '/bugs', apiBase = bugframe?.
   const routes = { [basePath]: 'index.html', [`${basePath}/`]: 'index.html', [`${basePath}/inbox.js`]: 'inbox.js', [`${basePath}/inbox.css`]: 'inbox.css' };
   routes[`${basePath}/review`] = 'index.html';
   if (bugframe.invitationsEnabled) { routes[`${basePath}/invite`] = 'invite.html'; routes[`${basePath}/invite.js`] = 'invite.js'; }
+  routes[`${basePath}/export.js`] = 'export.js';
   routes[`${basePath}/i18n.js`] = 'i18n.js'; routes[`${basePath}/ui.js`] = 'ui.js';
   const assets = new Map();
   const matches = input => Object.hasOwn(routes, new URL(input, 'http://localhost').pathname);

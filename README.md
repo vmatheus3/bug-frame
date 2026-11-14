@@ -1,25 +1,49 @@
 # Bugframe
 
+### Point at the problem. Give your developer the whole picture.
+
+Open-source website feedback for humans and coding agents. Capture a screenshot, describe a change, and follow it all the way to customer approval.
+
 [![CI](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml/badge.svg)](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
 [![Download](https://img.shields.io/badge/download-v0.5.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0)
 
-![Simple Bugframe reporting: screenshot added, one message, and send](docs/images/simple-feedback.png)
+[Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Connect Codex](#new-tickets--codex-inbox) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
 
-**Point to anything you want to improve.** Bugframe is a small drop-in website feedback tool for bugs, content changes, design improvements, and new ideas. Customers tap **Leave feedback**, write what they want changed, and send. The screenshot is added automatically; picking a spot and extra categories are optional. Developers get screenshots and technical context in a private inbox. Every request includes a screenshot of the marked area, page link, screen size, and element context. Optional console capture adds recent errors for debugging.
+![Bugframe: a screenshot, one message, and send](docs/images/simple-feedback.png)
 
-**Free and open source, under the MIT license.** Use it in personal or commercial projects, modify it, and share it.
-Run it on your own infrastructure or download reports as ZIP files. No Bugframe account or subscription is required;
-you cover any hosting you choose and any optional AI service you use to fix reports. Console capture is opt-in.
+**Your customer writes “the total is wrong.” You get the screenshot, page URL, viewport, and element context.** Optional console capture adds recent browser errors. No more asking which page, which phone, or which button.
 
+| From feedback to a verified change | Built in |
+| --- | --- |
+| **Capture in context** | Automatic screenshots, optional point-and-drag selection, bugs, design feedback, content changes, and ideas. |
+| **Triage without the tab hunt** | A private inbox with search, status and kind filters, sorting, screenshots, and request history. |
+| **Hand the context to your coding agent** | Copy a report as Markdown, export a worklist grouped by page, or connect new-ticket notifications to Codex. |
+| **Close the loop** | Deliver a change with a note. The customer checks the live page, approves, or requests an adjustment. |
+
+**Your infrastructure. Your reports. MIT licensed.** No Bugframe account, subscription, or analytics. Use your existing website login, keep reports on your server, or collect ZIP files without a server. Hosting and any optional AI service are yours to choose.
+
+## 5-minute quick start
+
+Try the complete widget and server locally with Node.js 20+ (the runtime server/CLI also support 18.17+):
+
+```bash
+git clone https://github.com/vmatheus3/bug-frame.git
+cd bug-frame
+npm ci
+npm run build
+npm run example
 ```
- customer / developer                 your site                  your server               you or your AI agent
- ──────────────                 ─────────                  ───────────               ────────────────────
-  ?bugs=1  ───────────────▶  [ feedback ]
-  drag a box, type  ─────▶   region.png + full.png  ───▶  bug-reports/<id>/   ───▶   bugframe export
-                              + url, viewport,             report.json                 → WORKLIST.md (by page)
-                                element path, console      region.png                  → developer delivers for review
-  "My requests" ◀──────────── status + review note  ◀─────────  full.png                   bugframe ready <id> --note …
+
+Open <http://127.0.0.1:4455/?bugs=1> and follow **Sign in as an approved tester**. The terminal prints a random demo password.
+Once signed in, report the deliberately wrong invoice total, then try **My requests**. Signing out revokes the session.
+Reports are stored in `examples/plain-html/reports/`. This localhost demo uses an HttpOnly session cookie; integrate your own website login in production.
+In another terminal in the repository:
+
+```bash
+node src/cli/bin.mjs --dir ./examples/plain-html/reports list
+node src/cli/bin.mjs --dir ./examples/plain-html/reports export
+node src/cli/bin.mjs --dir ./examples/plain-html/reports close <id> --note "Fixed the overlapping footer"
 ```
 
 ## How it works
@@ -107,30 +131,7 @@ For explicit local testing only, `--allow-localhost` permits HTTP to `127.0.0.1`
 
 Existing `webhook: { url, secret }` integrations now keep delivery state with each ticket. Persistent report storage keeps pending notifications across server restarts. Delivery is attempted up to eight times with exponential backoff, then appears as failed in the developer panel with a **Retry failed deliveries** action. The event uses a stable `eventId` and `Idempotency-Key`; receivers must deduplicate because delivery is at least once. The JSON includes a signed `sentAt` timestamp when a secret is configured. Redirects are refused and request errors do not echo secrets. Only reports created while a webhook is configured are queued; changing the endpoint does not silently send old events to a different destination. Custom adapters must preserve the `delivery` field. The webhook and the outbound Codex connector are independent; Codex does not require a webhook.
 
-## 5-minute quick start
-
-Try the complete widget and server locally with Node.js 20+ (the runtime server/CLI also support 18.17+):
-
-```bash
-git clone https://github.com/vmatheus3/bug-frame.git
-cd bug-frame
-npm ci
-npm run build
-npm run example
-```
-
-Open <http://127.0.0.1:4455/?bugs=1> and follow **Sign in as an approved tester**. The terminal prints a random demo password.
-Once signed in, report the deliberately wrong invoice total, then try **My requests**. Signing out revokes the session.
-Reports are stored in `examples/plain-html/reports/`. This localhost demo uses an HttpOnly session cookie; integrate your own website login in production.
-In another terminal in the repository:
-
-```bash
-node src/cli/bin.mjs --dir ./examples/plain-html/reports list
-node src/cli/bin.mjs --dir ./examples/plain-html/reports export
-node src/cli/bin.mjs --dir ./examples/plain-html/reports close <id> --note "Fixed the overlapping footer"
-```
-
-### Add it to your own project
+## Add it to your own project
 
 Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0).
 This installation does not depend on a package named `bugframe` being published to the npm registry:
@@ -398,8 +399,7 @@ const api = toNodeListener(bf);
 createServer((req, res) => inbox.matches(req.url) ? review(req, res) : api(req, res)).listen(4455);
 ```
 
-The inbox lists reports, shows selected/full screenshots and captured page context/browser errors, and lets admins update
-status with a fix note. Report text is rendered as text, not HTML. The administrator page at `/bugs/` requires admin access. Approved customers use `/bugs/review` to see their own requests, screenshots, and progress without technical logs or administrative controls. Application JavaScript requires approved access; static styles and translation helpers are public for the invitation shell, and the API rechecks authorization for every request. Pages use no-store caching, a restricted CSP, and noindex.
+The inbox lets you search reports, filter by status or feedback kind, and change the sort order. Open a request to see selected/full screenshots and captured page context/browser errors, copy its context as Markdown for a coding agent, or update its status with a fix note. Report text is rendered as text, not HTML. The administrator page at `/bugs/` requires admin access. Approved customers use `/bugs/review` to see their own requests, screenshots, and progress without technical logs or administrative controls. Application JavaScript requires approved access; static styles and translation helpers are public for the invitation shell, and the API rechecks authorization for every request. Pages use no-store caching, a restricted CSP, and noindex.
 
 Configure `basePath`, the same-origin `apiBase`, `siteName`, an existing `loginUrl`, `locale` (`auto`, `en`, `es`, `pt`), or `labels` (`refresh`, `reports`, `empty`,
 `choose`, `selectedArea`, `fullScreenshot`, `status`, `open`, `fixed`, `wontfix`, `note`, `save`, `details`). The inbox uses
@@ -508,7 +508,7 @@ reports as plain files that an AI agent can read, with nothing to sign up for.
 - Annotation tools (arrow, pen) on the selected area; optional redo of the region.
 - Optional DOM snapshot and short screen-recording as opt-in extras.
 - More languages (community translations welcome).
-- Inbox pagination and richer filtering for larger report stores.
+- Inbox pagination and saved views for larger report stores.
 
 ## Contributing
 

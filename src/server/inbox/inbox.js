@@ -1,4 +1,5 @@
 import { languageUI } from './ui.js';
+import { reportMarkdown } from './export.js';
 const $ = id => document.getElementById(id);
 const config = JSON.parse(document.body.dataset.config);
 const { apiBase, customer, basePath, siteUrl, invitations } = config;
@@ -10,6 +11,9 @@ const quote = value => "'" + value.replace(/'/g, "'\"'\"'") + "'";
 $('agent-command').value = `npx bugframe connect codex --remote ${quote(location.origin + apiBase)} --project .${location.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? ' --allow-localhost' : ''}`;
 let selectedId, selectedReport, rows = [], invitationRows = [], createdInvitation, lastMessage, agentStatus, generation = 0;
 const images = new Map();
+let visibleRows = [];
+const terminalStatuses = new Set(['approved', 'fixed', 'wontfix']);
+const searchable = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
 const statusKey = { open: 'open', reviewed: 'reviewed', in_progress: 'inProgress', ready_for_review: 'ready', changes_requested: 'changesRequested', approved: 'approved', fixed: 'fixed', wontfix: 'notPlanned' };
 const statusName = value => t(statusKey[value] ?? 'feedback');
 const kindName = value => t(['bug', 'content', 'design', 'idea'].includes(value ?? 'bug') ? value ?? 'bug' : 'feedback');
@@ -29,6 +33,7 @@ const clearPrivateContent = () => {
   for (const id of ['description', 'info', 'context', 'resolution', 'customer-note', 'current-text', 'suggested-text', 'invite-expiry']) $(id).textContent = '';
   for (const id of ['note', 'adjustment', 'invite-link', 'invite-email']) $(id).value = '';
   $('invitations').replaceChildren(); $('activity').replaceChildren(); $('invite-result').hidden = true;
+  visibleRows = []; $('export-preview').value = ''; $('export-fallback').hidden = true; $('copy-report').hidden = true; $('report-count').textContent = ''; $('no-results').hidden = true;
   for (const id of ['page-link', 'review-page']) $(id).removeAttribute('href');
 };
 async function request(route, options = {}) {
@@ -44,16 +49,45 @@ async function request(route, options = {}) {
   return response;
 }
 function renderRows() {
+  const query = searchable($('report-search').value).trim(), filter = $('report-filter').value, kind = $('report-kind').value;
+  visibleRows = rows.filter(report => {
+    const matchesStatus = filter === 'all' || (filter === 'active' ? !terminalStatuses.has(report.status) : filter === 'resolved' ? terminalStatuses.has(report.status) : report.status === filter);
+    const haystack = searchable([report.description, report.id, report.page, report.context?.url, report.url, report.note, kindName(report.kind), statusName(report.status)].filter(Boolean).join(' '));
+    return matchesStatus && (kind === 'all' || (report.kind ?? 'bug') === kind) && (!query || haystack.includes(query));
+  }).sort((a, b) => {
+    const difference = (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0);
+    return $('report-sort').value === 'oldest' ? difference : -difference;
+  });
   $('reports').replaceChildren(); $('empty').hidden = rows.length > 0;
-  for (const report of rows) {
+  $('no-results').hidden = !rows.length || visibleRows.length > 0;
+  $('report-count').textContent = t('reportCount', { shown: visibleRows.length, total: rows.length });
+  for (const report of visibleRows) {
     const button = document.createElement('button'); button.type = 'button';
-    const title = document.createElement('strong'), meta = document.createElement('small');
-    title.className = 'request-title'; title.textContent = report.description; meta.className = 'request-meta'; meta.textContent = `${statusName(report.status)} · ${kindName(report.kind)}`; button.append(title, meta);
+    const title = document.createElement('strong'), meta = document.createElement('span'), status = document.createElement('span'), kind = document.createElement('span');
+    title.className = 'request-title'; title.textContent = report.description;
+    meta.className = 'request-meta'; status.className = 'request-status'; status.dataset.status = report.status; status.textContent = statusName(report.status);
+    kind.className = 'request-kind'; kind.textContent = kindName(report.kind); meta.append(status, kind);
+    const footer = document.createElement('span'); footer.className = 'request-footer';
+    const date = new Date(report.createdAt); footer.textContent = Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(ui.locale, { month: 'short', day: 'numeric' });
+    button.append(title, meta, footer);
     button.dataset.reportId = report.id; button.setAttribute('aria-current', String(report.id === selectedId));
     button.addEventListener('click', () => show(report.id).catch(showError));
     const item = document.createElement('li'); item.append(button); $('reports').append(item);
   }
 }
+$('report-search').addEventListener('input', renderRows);
+for (const id of ['report-filter', 'report-kind', 'report-sort']) $(id).addEventListener('change', renderRows);
+$('clear-filters').addEventListener('click', () => { $('report-search').value = ''; $('report-filter').value = 'all'; $('report-kind').value = 'all'; renderRows(); $('report-search').focus(); });
+document.addEventListener('keydown', event => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+  if (event.key === '/' && !document.body.dataset.detailOpen) { event.preventDefault(); $('report-search').focus(); }
+  if (event.key === '/' && matchMedia('(min-width:721px)').matches) { event.preventDefault(); $('report-search').focus(); }
+  if (!['j', 'k'].includes(event.key) || !visibleRows.length) return;
+  event.preventDefault();
+  const index = visibleRows.findIndex(report => report.id === selectedId);
+  const next = index < 0 ? (event.key === 'j' ? 0 : visibleRows.length - 1) : Math.max(0, Math.min(visibleRows.length - 1, index + (event.key === 'j' ? 1 : -1)));
+  void show(visibleRows[next].id).catch(showError);
+});
 async function refresh() {
   const version = generation;
   const { reports } = await (await request(customer ? '/reports' : '/reports?all=1')).json();
@@ -81,7 +115,7 @@ function renderReportText(report) {
   }
 }
 async function show(id) {
-  selectedId = id; selectedReport = null; releaseImages(); $('detail').hidden = true;
+  selectedId = id; selectedReport = null; releaseImages(); $('detail').hidden = true; $('export-fallback').hidden = true; $('export-preview').value = ''; $('copy-report').hidden = customer;
   const version = generation;
   for (const button of $('reports').querySelectorAll('button')) button.setAttribute('aria-current', String(button.dataset.reportId === id));
   const report = customer ? rows.find(row => row.id === id) : await (await request('/reports/' + encodeURIComponent(id))).json();
@@ -168,7 +202,29 @@ function renderAgent() { if (!agentStatus) return; $('agent-status').textContent
 async function loadAgent() { if (customer) return; const version = generation; const data = await (await request('/agent')).json(); if (version !== generation) return; agentStatus = data; renderAgent(); }
 $('retry-notifications').addEventListener('click', async () => { $('retry-notifications').disabled = true; try { await request('/agent/retry', { method: 'POST', body: '{}' }); await loadAgent(); } catch (error) { showError(error); } finally { $('retry-notifications').disabled = false; } });
 $('back-to-requests').addEventListener('click', () => { delete document.body.dataset.detailOpen; selectedId = null; selectedReport = null; releaseImages(); $('detail').hidden = true; $('choose').hidden = false; $('back-to-requests').hidden = true; renderRows(); $('reports').querySelector('button')?.focus(); });
-async function reload() { await refresh(); if (selectedId) await show(selectedId); await loadInvitations(); await loadAgent(); }
+async function reload() {
+  $('refresh').disabled = true; $('reports').setAttribute('aria-busy', 'true');
+  try { await refresh(); if (selectedId) await show(selectedId); await Promise.all([loadInvitations(), loadAgent()]); }
+  finally { $('refresh').disabled = false; $('reports').removeAttribute('aria-busy'); }
+}
+$('copy-report').addEventListener('click', async () => {
+  if (customer || !selectedReport) return;
+  const report = selectedReport, version = generation;
+  $('copy-report').disabled = true;
+  try {
+    // Revalidate access before exporting private context from an idle tab.
+    await request('/reports/' + encodeURIComponent(report.id));
+    if (version !== generation || selectedId !== report.id) return;
+    const text = reportMarkdown(report);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(text); message('reportCopied');
+    } catch {
+      $('export-preview').value = text; $('export-fallback').hidden = false; $('export-preview').focus(); $('export-preview').select(); message('copyFailed');
+    }
+  } catch (error) { showError(error); }
+  finally { $('copy-report').disabled = false; }
+});
 $('refresh').addEventListener('click', () => { message(''); void reload().catch(showError); });
 window.addEventListener('pagehide', clearPrivateContent);
 window.addEventListener('pageshow', event => { if (event.persisted) reload().catch(showError); });

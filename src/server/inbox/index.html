@@ -17,10 +17,21 @@
   </details>
   <details id="agent-panel" hidden><summary data-i18n="agentConnection">{{T:agentConnection}}</summary><p data-i18n="agentIntro">{{T:agentIntro}}</p><p id="agent-status" role="status"></p><p data-i18n="agentUsesLogin">{{T:agentUsesLogin}}</p><label for="agent-command" data-i18n="agentCommandLabel">{{T:agentCommandLabel}}</label><input id="agent-command" type="text" readonly><p data-i18n="agentPrivateCredential">{{T:agentPrivateCredential}}</p><p id="delivery-status"></p><button id="retry-notifications" type="button" hidden data-i18n="retryNotifications">{{T:retryNotifications}}</button></details>
   <main>
-    <aside aria-labelledby="reports-title"><h2 id="reports-title" data-i18n="reports">{{T:reports}}</h2><p id="empty" data-i18n="empty" hidden>{{T:empty}}</p><ul id="reports"></ul></aside>
+    <aside aria-labelledby="reports-title">
+      <div class="list-heading"><h2 id="reports-title" data-i18n="reports">{{T:reports}}</h2><span id="report-count" aria-live="polite" aria-atomic="true"></span></div>
+      <div id="inbox-toolbar">
+        <label class="inbox-search" for="report-search"><span class="sr-only" data-i18n="searchReports">{{T:searchReports}}</span><input id="report-search" type="search" autocomplete="off" data-i18n="searchReports" data-i18n-attr="placeholder" placeholder="{{T:searchReports}}" aria-keyshortcuts="/"></label>
+        <div class="filter-row"><label class="sr-only" for="report-filter" data-i18n="filterReports">{{T:filterReports}}</label><select id="report-filter"><option value="all" data-i18n="allRequests">{{T:allRequests}}</option><option value="active" data-i18n="activeRequests">{{T:activeRequests}}</option><option value="ready_for_review" data-i18n="readyAdmin">{{T:readyAdmin}}</option><option value="in_progress" data-i18n="inProgress">{{T:inProgress}}</option><option value="changes_requested" data-i18n="changesRequested">{{T:changesRequested}}</option><option value="resolved" data-i18n="resolvedRequests">{{T:resolvedRequests}}</option></select>
+        <label class="sr-only" for="report-kind" data-i18n="filterKind">{{T:filterKind}}</label><select id="report-kind"><option value="all" data-i18n="allKinds">{{T:allKinds}}</option><option value="bug" data-i18n="bug">{{T:bug}}</option><option value="content" data-i18n="content">{{T:content}}</option><option value="design" data-i18n="design">{{T:design}}</option><option value="idea" data-i18n="idea">{{T:idea}}</option></select></div>
+        <label class="sr-only" for="report-sort" data-i18n="sortReports">{{T:sortReports}}</label><select id="report-sort"><option value="newest" data-i18n="newestFirst">{{T:newestFirst}}</option><option value="oldest" data-i18n="oldestFirst">{{T:oldestFirst}}</option></select>
+      </div>
+      <p id="empty" data-i18n="empty" hidden>{{T:empty}}</p><div id="no-results" hidden><p data-i18n="noResults">{{T:noResults}}</p><button id="clear-filters" type="button" data-i18n="clearFilters">{{T:clearFilters}}</button></div><ul id="reports"></ul>
+      <p class="keyboard-hint" data-i18n="keyboardHint">{{T:keyboardHint}}</p>
+    </aside>
     <section aria-labelledby="description"><button id="back-to-requests" type="button" hidden data-i18n="backRequests">{{T:backRequests}}</button>
       <p id="choose" data-i18n="choose">{{T:choose}}</p>
       <div id="detail" hidden>
+        <div class="detail-actions"><button id="copy-report" type="button" hidden data-i18n="copyReport">{{T:copyReport}}</button></div><label id="export-fallback" hidden><span data-i18n="copyManually">{{T:copyManually}}</span><textarea id="export-preview" rows="6" readonly></textarea></label>
         <h2 id="description" tabindex="-1"></h2><p id="info"></p><a id="page-link" target="_blank" rel="noopener noreferrer" hidden data-i18n="openPage">{{T:openPage}}</a>
         <dl id="wording" hidden><dt data-i18n="currentText">{{T:currentText}}</dt><dd id="current-text"></dd><dt data-i18n="suggestedText">{{T:suggestedText}}</dt><dd id="suggested-text"></dd></dl>
         <p id="resolution"></p><p id="customer-note"></p><details id="history-panel" open><summary data-i18n="history">{{T:history}}</summary><ol id="activity" data-i18n="requestHistory" data-i18n-attr="aria-label" aria-label="{{T:requestHistory}}"></ol></details>
