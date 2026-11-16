@@ -22,7 +22,11 @@ Commands:
                                        notify a dedicated Codex inbox about new requests; keep running
   list [--open] [--json]               one line per report
   show <id> [--json]                   everything recorded for one report
-  export [--all] [--out WORKLIST.md]   write the grouped work list (open reports unless --all)
+  export [--all] [--out WORKLIST.md] [--budget TOKENS|NNNc|none] [--playwright]
+                                       write the grouped work list (open reports unless --all);
+                                       over budget it dedupes near-identical reports and trims with
+                                       explicit markers (default ~12000 tokens, "none" = unlimited);
+                                       --playwright also writes failing-first repro test skeletons
   close <id> --note "..." [--status fixed|wontfix]
   ready <id> --note "what changed and what to review"
   reopen <id>
@@ -44,7 +48,7 @@ async function main(argv) {
     args: argv, allowPositionals: true, strict: true,
     options: {
       'allow-localhost': { type: 'boolean' }, site: { type: 'string' }, project: { type: 'string' }, interval: { type: 'string' }, 'state-dir': { type: 'string' }, once: { type: 'boolean' }, 'include-existing': { type: 'boolean' },
-      dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, note: { type: 'string' }, status: { type: 'string' },
+      dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, budget: { type: 'string' }, playwright: { type: 'boolean' }, note: { type: 'string' }, status: { type: 'string' },
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
@@ -72,7 +76,7 @@ async function main(argv) {
   switch (cmd) {
     case 'list': return cmdList(dir, { open: values.open, json: values.json });
     case 'show': return cmdShow(dir, need(), { json: values.json });
-    case 'export': return (await cmdExport(dir, { all: values.all, out: values.out })).message;
+    case 'export': return (await cmdExport(dir, { all: values.all, out: values.out, budget: values.budget, playwright: values.playwright })).message;
     case 'close': return cmdClose(dir, need(), { note: values.note, status: values.status });
     case 'ready': return cmdReady(dir, need(), { note: values.note });
     case 'reopen': return cmdReopen(dir, need());

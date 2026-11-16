@@ -3,6 +3,18 @@
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Token-budgeted worklists: `export --budget TOKENS|NNNc|none` (default ~12000 tokens). Over budget, near-identical reports (same page, marked element, and console-error class) merge into one item with a `Reported N times` count, long console errors are trimmed to the first line plus the first user-code stack frame with an explicit `lines omitted` marker, items are ordered most-reported first then newest, and anything dropped is counted in a closing marker. A worklist that fits passes through unchanged; `--budget none` keeps the old unlimited output.
+- Every worklist item carries an executable `Repro:` block (URL, viewport, element selector, captured console error), and `export --playwright` writes `WORKLIST.repro.spec.mjs` with a failing-first Playwright skeleton per report: navigate, check the marked element, and assert the captured console error does not occur — red on the broken page, green once fixed.
+
+### Fixed
+- The worklist header now tells agents to hand verified work back with `bugframe ready`, matching the prompts and the 0.5.0 review flow; `close` is named as the legacy path.
+
+### Still on the roadmap
+- Remote worklist export with authenticated screenshot retrieval (`export` over `--remote`) is not built yet; remote mode still supports list, show, close, ready, and reopen only.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added
