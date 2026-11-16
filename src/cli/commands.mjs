@@ -2,7 +2,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join, resolve, basename } from 'node:path';
 import { createFileStorage } from '../server/storage-fs.mjs';
 import { FEEDBACK_KINDS, ID_RE, FILE_NAMES, isOpen, isActionable, cleanContext, isPng, text } from '../server/util.mjs';
-import { buildWorklist, oneLine, showText } from './worklist.mjs';
+import { buildReproSpec, buildWorklist, oneLine, parseBudget, showText } from './worklist.mjs';
 import { readZip } from './zip-read.mjs';
 
 export class CliError extends Error {}
@@ -22,13 +22,16 @@ export async function cmdShow(dir, id, { json = false } = {}) {
   return json ? JSON.stringify(r, null, 2) : showText(r, resolve(dir));
 }
 
-export async function cmdExport(dir, { all = false, out, now } = {}) {
+export async function cmdExport(dir, { all = false, out, now, budget, playwright = false } = {}) {
+  let budgetChars; try { budgetChars = parseBudget(budget); } catch (e) { throw new CliError(e.message); }
   const rows = (await openStore(dir).list()).filter(r => all || isActionable(r.status));
   const target = resolve(out ?? join(dir, 'WORKLIST.md'));
   await mkdir(join(target, '..'), { recursive: true });
-  const body = buildWorklist(rows, { dir: resolve(dir), out: target, label: all ? 'total' : 'open', now });
+  const body = buildWorklist(rows, { dir: resolve(dir), out: target, label: all ? 'total' : 'open', now, budgetChars });
   await writeFile(target, body);
-  return { path: target, count: rows.length, message: rows.length ? `Wrote ${target}: ${rows.length} report${rows.length === 1 ? '' : 's'}` : `No ${all ? '' : 'open '}bug reports; wrote ${target}` };
+  let spec;
+  if (playwright && rows.length) { spec = target.replace(/\.md$/i, '') + '.repro.spec.mjs'; await writeFile(spec, buildReproSpec(rows)); }
+  return { path: target, count: rows.length, message: rows.length ? `Wrote ${target}: ${rows.length} report${rows.length === 1 ? '' : 's'}${spec ? `; repro spec ${spec}` : ''}` : `No ${all ? '' : 'open '}bug reports; wrote ${target}` };
 }
 
 export async function cmdClose(dir, id, { note, status = 'fixed' } = {}) {

@@ -413,7 +413,8 @@ session demonstration. Keep the private data folder outside source deployments a
 ```
 bugframe [--dir ./bug-reports] <command>
   list [--open] [--json]            show [id] [--json]
-  export [--all] [--out FILE]       close <id> --note "..." [--status fixed|wontfix]
+  export [--all] [--out FILE] [--budget TOKENS|NNNc|none] [--playwright]
+  close <id> --note "..." [--status fixed|wontfix]
   ready <id> --note "what changed and what to review"
   reopen <id>                       import <report.zip>
   [--remote HTTPS_API_URL --credentials FILE --timeout 30000] list|show|close|ready|reopen
@@ -457,6 +458,37 @@ explicitly requested fixes have been deployed and verified.
    reported size, fixes the root cause, proves it with before/after screenshots, runs the tests and closes every report with a
    plain-language note.
 4. You review the diff. The reporters see "Fixed" and the note next time they open "My requests".
+
+### Worklists that fit an agent's context
+
+Coding agents pay for every character they read, so `export --budget` keeps `WORKLIST.md` inside a token budget
+(opt-in, at ~4 characters per token; worklists under budget are unchanged by the budget) instead of drowning the agent in near-identical reports:
+
+```bash
+npx bugframe export --budget 4000      # fit the worklist into ~4000 tokens
+npx bugframe export --budget 16000c    # or budget in characters
+npx bugframe export --budget none      # unlimited (the default)
+```
+
+A worklist that already fits passes through unchanged. One that does not is reshaped honestly, never silently:
+reports on the same page with the same marked element and the same console-error class merge into one item with a
+`Reported N times` count; long console errors keep their first line plus the first stack frame that names your own
+code, with a `(N lines omitted; full error in …/report.json)` marker; items are ordered most-reported first, then
+newest, so the highest-signal ones survive the cut; and anything dropped is counted in a closing
+`N more reports omitted` line. Every item also carries a `Repro:` block (URL, viewport, selector, the captured
+console error) an agent can execute directly.
+
+### Failing-first repro tests
+
+```bash
+npx bugframe export --playwright       # also writes WORKLIST.repro.spec.mjs
+```
+
+For each exported report this writes a minimal [Playwright](https://playwright.dev) test skeleton that navigates
+to the reported URL at the reported viewport, checks the marked element, and asserts the captured console error
+does **not** occur — red on the broken page, green once the bug is fixed. Reports without a captured console error
+get an honest `TODO` instead of a fake green assertion. Adjust navigation and auth to your app; keep the console
+assertion.
 
 ## Privacy and security notes
 
