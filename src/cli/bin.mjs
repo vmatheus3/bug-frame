@@ -25,7 +25,7 @@ Commands:
   export [--all] [--out WORKLIST.md] [--budget TOKENS|NNNc|none] [--playwright]
                                        write the grouped work list (open reports unless --all);
                                        over budget it dedupes near-identical reports and trims with
-                                       explicit markers (default ~12000 tokens, "none" = unlimited);
+                                       explicit markers (opt-in; default and "none" = unlimited);
                                        --playwright also writes failing-first repro test skeletons
   close <id> --note "..." [--status fixed|wontfix]
   ready <id> --note "what changed and what to review"

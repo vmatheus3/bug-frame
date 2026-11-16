@@ -28,11 +28,10 @@ export function showText(r, dir) {
 }
 
 /** Tokens are approximated at 4 characters each throughout. */
-export const DEFAULT_BUDGET_TOKENS = 12000;
 
-/** Parse an export --budget value into a character limit. Absent → the sane default; "none"/"0" → the old unlimited output. */
+/** Parse an export --budget value into a character limit. Opt-in: absent, "none" and "0" → unlimited output. */
 export function parseBudget(v) {
-  if (v === undefined || v === null) return DEFAULT_BUDGET_TOKENS * 4;
+  if (v === undefined || v === null) return Infinity;
   const s = String(v).trim().toLowerCase();
   if (s === 'none') return Infinity;
   const m = /^(\d+)(c|chars?)?$/.exec(s);
@@ -125,8 +124,13 @@ export function buildWorklist(reports, { dir, out, label = 'open', now = new Dat
     if (g.ids.length > 1) item.push(`- Reported ${g.ids.length} times (also ${g.ids.filter(i => i !== r.id).slice(0, 5).join(', ')})`);
     item.push(...reproBlock(r), `- Region picture: \`${rel(r.id, 'region.png')}\``);
     for (const e of (c.consoleErrors ?? []).slice(0, 2)) item.push(...trimmedError(e.message, rel(r.id, 'report.json')));
-    const block = '\n' + item.join('\n') + '\n';
-    if (body.length + block.length + 120 > budgetChars) break;
+    let block = '\n' + item.join('\n') + '\n';
+    if (body.length + block.length + 120 > budgetChars) {
+      if (used) break;
+      // An empty worklist helps no agent: keep the top item, cut as hard as the marked-cut rules allow.
+      block = '\n' + [`### ${r.id}`, '', `> ${one(r.description).slice(0, 120)}${one(r.description).length > 120 ? ' [cut]' : ''}`, '', `- Page: ${pageOf(r)}`,
+        ...(g.ids.length > 1 ? [`- Reported ${g.ids.length} times`] : []), ...reproBlock(r), ...(c.consoleErrors?.[0] ? trimmedError(c.consoleErrors[0].message, rel(r.id, 'report.json')) : [])].join('\n') + '\n';
+    }
     body += block; used++;
   }
   const omitted = merged.length - used;

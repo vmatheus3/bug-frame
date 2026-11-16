@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { readFile, writeFile, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildWorklist, buildReproSpec, parseBudget, DEFAULT_BUDGET_TOKENS } from '../../src/cli/worklist.mjs';
+import { buildWorklist, buildReproSpec, parseBudget } from '../../src/cli/worklist.mjs';
 import { createBugframe } from '../../src/server/index.mjs';
 import { body, cleanup, post, tmpDir } from '../helpers.mjs';
 
@@ -23,7 +23,7 @@ const mk = (i, over = {}) => ({
 const opts = { dir: '/reports', out: '/reports/WORKLIST.md' };
 
 test('parseBudget: default, unlimited, tokens and chars', () => {
-  assert.equal(parseBudget(undefined), DEFAULT_BUDGET_TOKENS * 4);
+  assert.equal(parseBudget(undefined), Infinity);
   assert.equal(parseBudget('none'), Infinity);
   assert.equal(parseBudget('0'), Infinity);
   assert.equal(parseBudget('2000'), 8000);
@@ -31,11 +31,23 @@ test('parseBudget: default, unlimited, tokens and chars', () => {
   assert.throws(() => parseBudget('a lot'));
 });
 
-test('under budget the worklist passes through unchanged', () => {
-  const reports = [mk(1), mk(2, { context: { ...mk(2).context, url: 'https://app.test/invoices' } })];
-  const unlimited = buildWorklist(reports, { ...opts, now: new Date('2026-02-01') });
-  const budgeted = buildWorklist(reports, { ...opts, now: new Date('2026-02-01'), budgetChars: 1_000_000 });
-  assert.equal(budgeted, unlimited);
+test('default output equals main\'s committed worklist except the header and Repro blocks', async () => {
+  const reports = [mk(1), mk(2, { context: { ...mk(2).context, url: 'https://app.test/invoices', consoleErrors: [] } })];
+  const now = new Date('2026-02-01');
+  const mainOut = await readFile(join(dirname(fileURLToPath(import.meta.url)), '../fixtures/main-worklist.md'), 'utf8');
+  const mine = buildWorklist(reports, { ...opts, now });
+  assert.equal(buildWorklist(reports, { ...opts, now, budgetChars: parseBudget(undefined) }), mine);
+  const norm = md => md.replace(/^- Repro:\n(  - .*\n)+/gm, '').replace(/^Generated .*$/m, 'Generated');
+  assert.equal(norm(mine), norm(mainOut));
+  // A budget big enough to fit changes nothing.
+  assert.equal(buildWorklist(reports, { ...opts, now, budgetChars: 1_000_000 }), mine);
+});
+
+test('first item alone over budget: still emits it, trimmed, plus the omitted marker', () => {
+  const md = buildWorklist([mk(1), mk(2, { context: { ...mk(2).context, url: 'https://app.test/b' } })], { ...opts, budgetChars: 300 });
+  assert.match(md, /### bug-20260101-0000\d\d-aaaa/);
+  assert.match(md, /- Repro:/);
+  assert.match(md, /1 more report omitted to fit the budget/);
 });
 
 test('every worklist item carries an executable Repro block', () => {
@@ -100,7 +112,7 @@ test('CLI: export --budget and --playwright are wired end to end', async () => {
     const msg = await run(dir, 'export', '--budget', '250', '--playwright');
     assert.match(msg, /repro spec/);
     const md = await readFile(join(dir, 'WORKLIST.md'), 'utf8');
-    assert.ok(md.length <= 1000, `budgeted worklist is ${md.length} chars`);
+    assert.match(md, /### bug-/); // the top item is always kept
     await access(join(dir, 'WORKLIST.repro.spec.mjs'));
     await assert.rejects(() => run(dir, 'export', '--budget', 'nope'), /--budget/);
   } finally { await cleanup(dir); }

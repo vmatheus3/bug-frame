@@ -461,13 +461,13 @@ explicitly requested fixes have been deployed and verified.
 
 ### Worklists that fit an agent's context
 
-Coding agents pay for every character they read, so `export` keeps `WORKLIST.md` inside a token budget
-(~12000 tokens by default, at ~4 characters per token) instead of drowning the agent in near-identical reports:
+Coding agents pay for every character they read, so `export --budget` keeps `WORKLIST.md` inside a token budget
+(opt-in, at ~4 characters per token; worklists under budget are unchanged by the budget) instead of drowning the agent in near-identical reports:
 
 ```bash
 npx bugframe export --budget 4000      # fit the worklist into ~4000 tokens
 npx bugframe export --budget 16000c    # or budget in characters
-npx bugframe export --budget none      # the old unlimited output
+npx bugframe export --budget none      # unlimited (the default)
 ```
 
 A worklist that already fits passes through unchanged. One that does not is reshaped honestly, never silently:
