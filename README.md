@@ -8,7 +8,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
 [![Download](https://img.shields.io/badge/download-v0.5.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0)
 
-[Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Connect Codex](#new-tickets--codex-inbox) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
+[Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Audit the whole site](#audit-the-whole-site-no-ai-tokens) · [Connect Codex](#new-tickets--codex-inbox) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
 
 ![Bugframe: a screenshot, one message, and send](docs/images/simple-feedback.png)
 
@@ -21,6 +21,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 | **Hand the context to your coding agent** | Copy a report as Markdown, export a worklist grouped by page, or connect new-ticket notifications to Codex. |
 | **Close the loop** | Deliver a change with a note. The customer checks the live page, approves, or requests an adjustment. |
 | **Let the page check itself** | Developers click **Analyze this page**; `bugframe audit` measures it in a real browser at phone to desktop sizes and returns a report of layout, contrast, accessibility and dead-button problems. [How it works](#analyze-a-page-blind-audit) |
+| **Check the whole site, free** | `bugframe crawl` opens every page of your site or CRM, clicks every safe button and maps what each one does: dead buttons, broken links, menus that differ between pages, the same action wired differently. A script, no AI tokens. [How it works](#audit-the-whole-site-no-ai-tokens) |
 
 **Your infrastructure. Your reports. MIT licensed.** No Bugframe account, subscription, or analytics. Use your existing website login, keep reports on your server, or collect ZIP files without a server. Hosting and any optional AI service are yours to choose.
 
@@ -429,6 +430,10 @@ bugframe [--dir ./bug-reports] <command>
   audit <url> --project FOLDER [--out DIR] [--viewports …] [--agent claude|none | --agent-cmd CMD] [--model ID] [--no-click] [--timeout MS] [--keep] [--base-url URL] [--allow-remote]
   audit --watch --project FOLDER [--base-url http://localhost:3000] [--once] [--out DIR] [--allow-remote]
   audit --check-blind [--model ID]
+  crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]... [--viewports 390x844,1440x900]
+        [--storage-state FILE] [--no-click] [--max-controls-per-page 60] [--concurrency 2] [--timeout MS] [--max-minutes 30]
+        [--fail-on high|medium|low|none] [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
+  crawl login <url> [--save .bugframe-auth.json]
 ```
 
 `--dir` can also come from `BUGFRAME_DIR`. `serve` reads `BUGFRAME_ADMIN_TOKEN` and `BUGFRAME_AUTH_MODULE`.
@@ -619,6 +624,67 @@ project_doc_max_bytes=0` still loads the global `~/.codex/AGENTS.md`. `--agent-c
 (prompt and task on stdin, the evidence in `_bugframe_audit/`, the report on stdout) with a warning that blindness is
 then your responsibility. `--agent none` writes the probe-only report plus `AUDIT_TASK.md` and `AUDIT_PAGE.md`, so you
 can run an auditor yourself. Details: [docs/page-audit.md](docs/page-audit.md).
+
+## Audit the whole site (no AI tokens)
+
+`bugframe crawl` checks the whole system at once: every page, and every button on it. It is a script: it spends no AI
+tokens, so you can run it on every change or in CI.
+
+![Crawl report: summary tiles, filters, and findings such as a repeated console error, a dead Export button, a contact form that never sends and a broken navigation link, each with a screenshot](docs/images/crawl-report.png)
+
+**1. (Optional) Sign in once**, if the pages are behind a login. A browser window opens; you sign in yourself and press
+Enter in the terminal. Bugframe never sees or stores your password, only the session cookies (in a `0600` file):
+
+```bash
+npx bugframe crawl login http://localhost:3000/login --save .bugframe-auth.json
+echo ".bugframe-auth*.json" >> .gitignore
+```
+
+**2. Crawl:**
+
+```bash
+npx bugframe crawl http://localhost:3000/ --storage-state .bugframe-auth.json
+```
+
+**3. Open `crawl.html`** in a browser to read it, or **hand `CRAWL.md` to your coding agent**: every finding has its
+pages, route, element, measured evidence, a screenshot and a fix direction, and the wiring map lists what every control
+does.
+
+| What each page's controls do | On a phone |
+| --- | --- |
+| ![Site map: one card per page with a screenshot and each control's outcome: navigates, opens, calls-backend, dead or skipped](docs/images/crawl-sitemap.png) | ![The same report on a phone](docs/images/crawl-report-mobile.png) |
+
+*These pictures are a real run of `bugframe crawl` on the fictional "Northstar Studio" dashboard in `npm run example`
+(`/studio`, problems planted on purpose), with no AI model.*
+
+What it does:
+
+- **Finds every page.** Breadth-first through same-site links (also `area`, `data-href` and router links), redirects,
+  `sitemap.xml` and URLs that buttons open (pushState and `#/hash` routes). Record pages collapse into one route:
+  `/clients/123` and `/clients/456` are `/clients/:id`, and only the first two of each are opened, so a CRM with 10,000
+  clients is not crawled 10,000 times.
+- **Clicks every safe control** in a fresh copy of the page and records what happened: `navigates` (where to),
+  `opens` (dialog, menu, popup), `changes` (the page changed in place), `calls-backend` (the request it fired, e.g.
+  `POST /api/save`, blocked before it was sent), `error` or `dead` (nothing at all).
+- **Checks the whole system for inconsistencies**, like a design linter does for looks, but for wiring: dead buttons
+  and forms that never send, links and routes that 404 or fail, pages nothing links to, a menu that differs on some
+  pages, one label leading to different places (and one place with different labels), the same button wired differently
+  on different pages, missing or duplicate titles, the same console error on many pages (one root cause), failing API
+  endpoints grouped across pages, spinners that never finish and pages mixing languages. Plus the page checks of
+  `audit` (contrast, overflow, names, tap targets…) on every page.
+- **Never changes anything.** The same guards as `audit`: local sites only unless `--allow-remote`; every non-GET
+  request, form submission, WebSocket and beacon is blocked and recorded; downloads, popups and service workers are
+  off; controls and links that look destructive (delete, pay, cancel, **sign out**, … in English, Portuguese and Spanish)
+  are listed and never clicked, so your session survives; caps on pages, depth, clicks per page and time.
+
+Exit code 1 with `--fail-on high` (or `medium`, `low`) when findings reach that level, for CI. `--summarize` is the only
+step that uses AI: a small model (`--model haiku` by default) gets a trimmed copy of `crawl.json` (about 20k tokens
+at most, printed before it runs) in an empty folder, with the same confined flags as `audit`, and writes `SUMMARY.md`:
+a fix plan grouped by root cause, checked so it only cites real findings.
+
+**`crawl` or `audit`?** Use `crawl` for the whole system: every page and button, wiring and consistency, free and fast
+enough for CI. Use `audit` for one page you want judged deeply: an AI auditor reads that page's evidence and your code
+and returns `file:line` causes. Details, every option and the limits: [docs/crawl.md](docs/crawl.md).
 
 ## Privacy and security notes
 

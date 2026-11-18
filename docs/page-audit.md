@@ -109,8 +109,9 @@ elsewhere.
    erase, wipe, purge, pay, payment, purchase, buy, checkout, place order, subscribe, unsubscribe, log out, sign out,
    deactivate, close account, cancel subscription/account/plan/order, transfer, withdraw, refund, send money, reset,
    revoke; Portuguese and Spanish equivalents). Links to other sites, `mailto:` and `tel:` are not clicked. A control is
-   *appears dead* only when the click produced no DOM mutation, navigation, dialog, request (sent or blocked), form
-   submission, popup or console output within 700 ms.
+   *appears dead* only when the click produced no DOM mutation, navigation, dialog, opened menu or popover,
+   `aria-expanded` change, focus move, request (sent or blocked), form submission, popup or console output within 700 ms.
+   A submitted form with an action (or `method="post"`) is recorded as `FORM <METHOD> <path>` among the blocked requests.
 3. **Auditor.** With `--agent claude`, Claude Code runs in the workspace as:
 
    ```

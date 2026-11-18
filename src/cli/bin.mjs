@@ -11,6 +11,7 @@ import { setupProject } from './setup.mjs';
 import { connectCodex } from './codex.mjs';
 import { remoteCommand, remoteCredentials } from './remote.mjs';
 import { auditCommand } from './audit/index.mjs';
+import { crawlCommand } from './crawl/index.mjs';
 
 const HELP = `bugframe - collect visual feedback and hand them to a person or an AI agent
 
@@ -42,6 +43,18 @@ Commands:
   audit --watch --dir REPORTS --project FOLDER [--base-url http://localhost:3000] [--once] [--allow-remote]
                                        process "Analyze this page" requests from the widget
   audit --check-blind [--model ID]     prove on this machine that the auditor is blind and confined
+  crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]...
+        [--viewports 390x844,1440x900] [--storage-state FILE] [--no-click] [--max-controls-per-page 60]
+        [--concurrency 2] [--timeout MS] [--max-minutes 30] [--fail-on high|medium|low|none]
+        [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
+                                       whole-site check, no AI tokens: opens every page (same-origin,
+                                       one route per id pattern, max 2 each), clicks every safe control
+                                       (writes blocked, destructive and sign-out skipped) and reports dead
+                                       buttons, broken links, inconsistent navigation and wiring; writes
+                                       crawl.html, CRAWL.md and crawl.json. Local sites only unless
+                                       --allow-remote. --summarize: optional fix plan by a small model
+  crawl login <url> [--save .bugframe-auth.json]
+                                       open a browser, sign in yourself, save the session for --storage-state
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL] [--webhook-secret S]
                                        authorized sessions via a module exporting authorize(request), or admin-token access only
                                        set BUGFRAME_ADMIN_TOKEN / BUGFRAME_AUTH_MODULE to keep config out of shell history
@@ -62,6 +75,8 @@ async function main(argv) {
       dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, budget: { type: 'string' }, playwright: { type: 'boolean' }, note: { type: 'string' }, status: { type: 'string' },
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
       viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' }, 'allow-remote': { type: 'boolean' },
+      'max-pages': { type: 'string' }, 'max-depth': { type: 'string' }, include: { type: 'string', multiple: true }, exclude: { type: 'string', multiple: true }, 'storage-state': { type: 'string' }, 'max-controls-per-page': { type: 'string' },
+      concurrency: { type: 'string' }, 'max-minutes': { type: 'string' }, 'fail-on': { type: 'string' }, summarize: { type: 'boolean' }, save: { type: 'string' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
   });
@@ -79,6 +94,7 @@ async function main(argv) {
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   }
   if (cmd === 'audit') return auditCommand(arg, values, dir);
+  if (cmd === 'crawl') return crawlCommand(positionals.slice(1), values);
   if (values.remote) {
     if (values.dir) throw new CliError('--remote and --dir cannot be combined.');
     if (!['list', 'show', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, close, ready and reopen only.');

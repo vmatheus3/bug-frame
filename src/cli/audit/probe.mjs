@@ -39,8 +39,8 @@ export function redactUrl(u) {
   return url.href;
 }
 /** A request URL for the record: the path for this site, origin + path for others. Never the query string. */
-const pathOf = (u, origin) => { try { const x = new URL(u); return x.origin === origin ? x.pathname : x.origin + x.pathname; } catch { return '(invalid url)'; } };
-const scrub = text => String(text ?? '').replace(/([?&][^=\s&#]*(?:token|key|secret|pass|auth|code|session|sig)[^=\s&#]*=)[^&\s#'"]+/gi, '$1REDACTED').slice(0, 500);
+export const pathOf = (u, origin) => { try { const x = new URL(u); return x.origin === origin ? x.pathname : x.origin + x.pathname; } catch { return '(invalid url)'; } };
+export const scrub = text => String(text ?? '').replace(/([?&][^=\s&#]*(?:token|key|secret|pass|auth|code|session|sig)[^=\s&#]*=)[^&\s#'"]+/gi, '$1REDACTED').slice(0, 500);
 
 export async function loadPlaywright(project) {
   const specs = [];
@@ -55,7 +55,7 @@ export async function loadPlaywright(project) {
 }
 
 // ---- runs inside the page (serialized by Playwright: no closures over module scope)
-function pageChecks({ phone, structural, max }) {
+export function pageChecks({ phone, structural, max }) {
   const out = [], vw = document.documentElement.clientWidth, vh = window.innerHeight;
   const add = (type, severity, el, title, evidence, measured = {}) => { if (out.filter(f => f.type === type).length < max) out.push({ type, severity, selector: el ? sel(el) : '', title, evidence, measured }); };
   const isUi = el => Boolean(el.closest?.('[data-bug-ui]'));
@@ -207,18 +207,23 @@ function pageChecks({ phone, structural, max }) {
 }
 
 /** Every browser context the probe opens: no downloads, no service workers. */
-const CONTEXT = { deviceScaleFactor: 1, serviceWorkers: 'block', acceptDownloads: false };
+export const CONTEXT = { deviceScaleFactor: 1, serviceWorkers: 'block', acceptDownloads: false };
 
 /**
  * Block and record everything that could change something: non-GET requests, WebSockets, beacons, navigations to other
  * sites or to destructive-looking URLs (the audited page itself excepted); cancel form submissions; close popups.
  */
-async function guard(context, origin, blocked, target) {
+export async function guard(context, origin, blocked, target) {
   if (typeof context.routeWebSocket !== 'function') throw new CliError('Page audit needs Playwright 1.48 or newer (it must block WebSockets). In your project run: npm i -D playwright@latest');
   await context.exposeBinding('__bfBlock', (_source, method, url) => { blocked.push({ method: String(method), url: pathOf(String(url), origin) }); });
   await context.addInitScript(() => {
     window.__bfSubmits = 0;
-    window.addEventListener('submit', e => { window.__bfSubmits++; e.preventDefault(); }, true);
+    // A form with an action or method="post" would reach the server: record where it would have gone (never sent).
+    window.addEventListener('submit', e => {
+      window.__bfSubmits++; e.preventDefault();
+      const f = e.target, method = String(f?.getAttribute?.('method') || 'get').toUpperCase();
+      if (f?.hasAttribute?.('action') || method === 'POST') { try { window.__bfBlock(`FORM ${method}`, new URL(f.getAttribute('action') || '', location.href).href); } catch { /* bad url */ } }
+    }, true);
     HTMLFormElement.prototype.submit = function () { window.__bfSubmits++; };
     // Beacons are POSTs the page cannot observe; never send them.
     if (navigator.sendBeacon) navigator.sendBeacon = function (url) { try { window.__bfBlock('BEACON', new URL(url, location.href).href); } catch { /* bad url */ } return true; };
@@ -250,22 +255,23 @@ export async function checkLink(request, href, origin, hops = 5) {
   return { status: null, error: 'too many redirects' };
 }
 
-function watch(page, origin) {
-  const log = { console: [], pageErrors: [], failed: [], requests: 0, dialogs: 0 };
+export function watch(page, origin) {
+  const log = { console: [], pageErrors: [], failed: [], requests: 0, dialogs: 0, calls: [] };
   // Chrome's "Failed to load resource" line duplicates the failed request (recorded with its URL); blocked ones are ours.
   page.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource|ERR_BLOCKED_BY_CLIENT/.test(m.text())) log.console.push(scrub(m.text())); });
   page.on('pageerror', e => log.pageErrors.push(scrub(e?.message ?? e)));
-  page.on('request', () => { log.requests++; });
+  page.on('request', r => { log.requests++; if (['fetch', 'xhr', 'eventsource'].includes(r.resourceType()) && ['GET', 'HEAD'].includes(r.method())) log.calls.push(`${r.method()} ${pathOf(r.url(), origin)}`); });
   page.on('requestfailed', r => { const t = r.failure()?.errorText ?? ''; if (!/BLOCKED_BY_CLIENT|aborted/i.test(t)) log.failed.push({ method: r.method(), url: pathOf(r.url(), origin), status: null, error: t.slice(0, 80) }); });
   page.on('response', r => { if (r.status() >= 400) log.failed.push({ method: r.request().method(), url: pathOf(r.url(), origin), status: r.status() }); });
   page.on('dialog', d => { log.dialogs++; d.dismiss().catch(() => {}); });
   return log;
 }
 
-async function load(page, url) {
-  await page.goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT });
+export async function load(page, url, timeout = NAV_TIMEOUT) {
+  const response = await page.goto(url, { waitUntil: 'load', timeout });
   await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
   await page.waitForTimeout(250);
+  return response;
 }
 
 /**
@@ -359,32 +365,48 @@ export async function probePage({ url, viewports = parseViewports(), click = tru
   return probe;
 }
 
-async function clickOne({ context, url, c, n, outDir, evidencePrefix, origin, blocked, vp, raw }) {
+/** Visible dialogs, menus and popovers; the target's aria-expanded; where focus is. Runs in the page. */
+function OVERLAY_STATE(selector) {
+  const shown = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+  const overlays = [...document.querySelectorAll('dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true], [role=menu], [role=listbox], [popover]')].filter(shown).length;
+  let target = null; try { target = document.querySelector(selector); } catch { /* bad selector */ }
+  const a = document.activeElement, focus = a && a !== document.body ? `${a.tagName}#${a.id}.${a.className}:${(a.textContent ?? '').slice(0, 30)}` : '';
+  return { overlays, expanded: target?.getAttribute('aria-expanded') ?? null, focus, focusOnTarget: Boolean(target && a && (a === target || target.contains(a))) };
+}
+
+/** Click one control in a fresh copy of the page and record everything it caused. Also used by `bugframe crawl`. */
+export async function clickOne({ context, url, c, n, outDir, evidencePrefix, origin, blocked, vp, raw, timeout }) {
   const page = await context.newPage(), pageLog = watch(page, origin), popups = [];
   const onPage = p => { if (p !== page) { popups.push(pathOf(p.url(), origin)); p.close().catch(() => {}); } };
   context.on('page', onPage);
   const record = { selector: c.selector, label: c.label };
   try {
-    await load(page, url);
+    await load(page, url, timeout);
     const el = page.locator(c.selector).first();
     if (!(await el.count()) || !(await el.isVisible())) return { ...record, outcome: 'not found in a fresh page' };
+    const was = await page.evaluate(OVERLAY_STATE, c.selector).catch(() => null);
     await page.evaluate(() => { window.__bfMut = 0; new MutationObserver(list => { window.__bfMut += list.length; }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); });
-    const before = { url: page.url(), requests: pageLog.requests, blocked: blocked.length, console: pageLog.console.length, errors: pageLog.pageErrors.length, dialogs: pageLog.dialogs, failed: pageLog.failed.length };
+    const before = { url: page.url(), calls: pageLog.calls.length, requests: pageLog.requests, blocked: blocked.length, console: pageLog.console.length, errors: pageLog.pageErrors.length, dialogs: pageLog.dialogs, failed: pageLog.failed.length };
     let clickError = '';
     try { await el.click({ timeout: 3000 }); } catch (e) { clickError = String(e?.message ?? e).split('\n')[0].slice(0, 160); }
     await page.waitForTimeout(700);
     await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
     const mutations = await page.evaluate(() => window.__bfMut ?? 0).catch(() => null);
     const submits = await page.evaluate(() => window.__bfSubmits ?? 0).catch(() => 0);
+    const after = page.url() === before.url ? await page.evaluate(OVERLAY_STATE, c.selector).catch(() => null) : null;
     const effects = { domChanged: mutations === null ? null : mutations > 0, navigated: page.url() !== before.url ? pathOf(page.url(), origin) : false, dialog: pageLog.dialogs > before.dialogs,
       requestsAttempted: pageLog.requests - before.requests, blockedRequests: blocked.slice(before.blocked).map(b => `would have sent ${b.method} ${b.url}`), formSubmitIntercepted: submits > 0, popup: popups[0] ?? false,
-      consoleErrors: pageLog.console.slice(before.console), pageErrors: pageLog.pageErrors.slice(before.errors) };
+      consoleErrors: pageLog.console.slice(before.console), pageErrors: pageLog.pageErrors.slice(before.errors),
+      // A dialog, menu or popover appeared, or the control reports itself expanded; focus moved somewhere else.
+      opened: Boolean(after && was && (after.overlays > was.overlays || (after.expanded === 'true' && was.expanded !== 'true'))),
+      focusMoved: Boolean(after && was && after.focus && after.focus !== was.focus && !after.focusOnTarget),
+      navigatedUrl: page.url() !== before.url ? redactUrl(page.url()) : false, calls: pageLog.calls.slice(before.calls) };
     effects.failedRequests = pageLog.failed.slice(before.failed).filter(r => r.url !== effects.navigated).map(r => `${r.method} ${r.url} → ${r.status ?? r.error}`);
     const errored = effects.consoleErrors.length > 0 || effects.pageErrors.length > 0 || effects.failedRequests.length > 0;
-    const dead = !clickError && !effects.domChanged && !effects.navigated && !effects.dialog && !effects.requestsAttempted && !effects.blockedRequests.length && !effects.formSubmitIntercepted && !effects.popup && !errored && mutations !== null;
+    const dead = !clickError && !effects.domChanged && !effects.navigated && !effects.dialog && !effects.opened && !effects.focusMoved && !effects.requestsAttempted && !effects.blockedRequests.length && !effects.formSubmitIntercepted && !effects.popup && !errored && mutations !== null;
     const outcome = clickError ? 'could not click' : dead ? 'appears dead' : errored ? 'error after click' : 'responded';
     let screenshot;
-    if (dead || errored || clickError) { screenshot = `${evidencePrefix}/clicks/c${n}.png`; await page.screenshot({ path: join(outDir, 'clicks', `c${n}.png`) }).catch(() => { screenshot = undefined; }); }
+    if (dead || errored || clickError) { await mkdir(join(outDir, 'clicks'), { recursive: true }); screenshot = `${evidencePrefix}/clicks/c${n}.png`; await page.screenshot({ path: join(outDir, 'clicks', `c${n}.png`) }).catch(() => { screenshot = undefined; }); }
     const where = `${vp.name} light`;
     if (dead) raw.push({ type: 'dead-control', severity: 'high', selector: c.selector, title: `"${c.label || c.tag}" does nothing when clicked`, evidence: 'click caused no DOM change, navigation, dialog, request, popup or console output within 700ms', viewport: where, screenshot });
     if (errored) raw.push({ type: 'click-error', severity: 'high', selector: c.selector, title: `Clicking "${c.label || c.tag}" raises an error`, evidence: [...effects.pageErrors, ...effects.consoleErrors, ...effects.failedRequests][0], viewport: where, screenshot });

@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as pause } from 'node:timers/promises';
 
 const listener = createServer();
@@ -16,7 +17,7 @@ const origin = `http://127.0.0.1:${port}`, data = await mkdtemp(join(tmpdir(), '
 // A disposable copy lets the example headline really change before the customer reviews it.
 const demoRoot = join(data, 'app');
 await mkdir(join(demoRoot, 'examples/plain-html'), { recursive: true });
-for (const name of ['server.mjs', 'index.html', 'login.html', 'review-demo.html', 'audit-demo.html']) await cp(`examples/plain-html/${name}`, join(demoRoot, 'examples/plain-html', name));
+for (const name of ['server.mjs', 'studio.mjs', 'index.html', 'login.html', 'review-demo.html', 'audit-demo.html']) await cp(`examples/plain-html/${name}`, join(demoRoot, 'examples/plain-html', name));
 await cp('src/server', join(demoRoot, 'src/server'), { recursive: true });
 await cp('package.json', join(demoRoot, 'package.json'));
 await mkdir(join(demoRoot, 'dist'), { recursive: true });
@@ -92,7 +93,22 @@ try {
   // Request, note and report only: the screenshots and status form below it are already shown in bugframe-overview.png.
   const panel = await owner.locator('#audit-panel').boundingBox();
   await owner.screenshot({ path: join(directory, 'page-audit-report.png'), fullPage: true, animations: 'disabled', clip: { x: 0, y: 0, width: 1440, height: Math.ceil(panel.y + panel.height + 32) } });
-  console.log('Updated 13 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
+  // `bugframe crawl` on the demo dashboard (/studio, problems planted on purpose): a real script-only run, no AI model.
+  const crawlOut = join(data, 'crawl');
+  await promisify(execFile)(process.execPath, ['src/cli/bin.mjs', 'crawl', origin + '/studio', '--out', crawlOut], { timeout: 300_000 });
+  const reportContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, locale: 'en-US', colorScheme: 'light' });
+  const report = await reportContext.newPage(); await report.goto(pathToFileURL(join(crawlOut, 'crawl.html')).href);
+  const box = locator => locator.boundingBox().then(b => { if (!b) throw new Error('crawl report element not found'); return b; });
+  const fifth = await box(report.locator('.finding').nth(4));
+  await report.screenshot({ path: join(directory, 'crawl-report.png'), fullPage: true, animations: 'disabled', clip: { x: 0, y: 0, width: 1440, height: Math.ceil(fifth.y + fifth.height + 28) } });
+  const mapTop = (await box(report.locator('#sitemap'))).y - 20, sixth = await box(report.locator('.map .page').nth(5));
+  await report.screenshot({ path: join(directory, 'crawl-sitemap.png'), fullPage: true, animations: 'disabled', clip: { x: 0, y: mapTop, width: 1440, height: Math.ceil(sixth.y + sixth.height + 6 - mapTop) } });
+  const reportPhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1, locale: 'en-US', colorScheme: 'light' });
+  const phoneReport = await reportPhone.newPage(); await phoneReport.goto(pathToFileURL(join(crawlOut, 'crawl.html')).href);
+  await phoneReport.locator('#findings').scrollIntoViewIfNeeded(); await phoneReport.evaluate(() => window.scrollTo(0, document.querySelector('#findings').getBoundingClientRect().top + window.scrollY - 12));
+  await capture(phoneReport, 'crawl-report-mobile.png', false);
+  await reportContext.close(); await reportPhone.close();
+  console.log('Updated 16 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
 } finally {
   await browser?.close();
   const exited = new Promise(resolve => server.once('exit', resolve)); server.kill();
