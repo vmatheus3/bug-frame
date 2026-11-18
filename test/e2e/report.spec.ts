@@ -90,7 +90,7 @@ test('whole screen, and the tool stays off without ?bugs=1', async ({ page }) =>
   await expect(page.locator('.sent')).toBeVisible();
   await page.goto('/');                                    // still on without the query string
   await expect(page.locator('.fab')).toBeVisible();
-  await page.locator('.fab').click(); await page.getByRole('menuitem', { name: /Turn off/ }).click();
+  await page.locator('.fab').click(); await page.getByRole('button', { name: /Turn off/ }).click();
   await expect(page.locator('[data-bugframe]')).toHaveCount(0);
 });
 

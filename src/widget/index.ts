@@ -354,7 +354,7 @@ class Bugframe implements BugframeInstance {
     wrap.style.setProperty('--bf-x', `${this.o.offset?.x ?? 0}px`); wrap.style.setProperty('--bf-y', `${this.o.offset?.y ?? 0}px`);
     this.wrap = wrap;
     const open = (this.reports ?? []).filter(r => !['fixed', 'wontfix', 'approved'].includes(r.status)).length;
-    const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'menu', 'aria-expanded': String(this.menu), disabled: busy });
+    const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'dialog', 'aria-expanded': String(this.menu), disabled: busy });
     fab.append(icon(busy ? ICON_SPIN : ICON_INSECT));
     if (open > 0 && !busy) fab.append(h('b', { class: 'count', 'aria-label': t.openCount.replace('{n}', String(open)) }, String(open)));
     fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
@@ -369,11 +369,21 @@ class Bugframe implements BugframeInstance {
   }
 
   private renderMenu(): HTMLElement {
-    const t = this.t, menu = h('div', { class: 'menu', role: 'menu', 'aria-label': t.menuMine });
+    // A popover with mixed content is a dialog. Only the actions are a menu (a menu may hold nothing but menu items);
+    // the request list, with its links, buttons and text box, and "Turn off" sit beside it.
+    const t = this.t, menu = h('div', { class: 'menu', role: 'dialog', 'aria-label': t.menuMine });
+    const actions = h('div', { class: 'actions', role: 'menu', 'aria-label': t.button, 'aria-orientation': 'vertical' });
     const main = h('button', { type: 'button', role: 'menuitem', class: 'item main' }, icon(ICON_BUG), t.menuReport);
     main.addEventListener('click', () => void this.begin());
-    menu.append(main);
-    if (this.api && this.role === 'admin') menu.append(this.analyzeItem());
+    actions.append(main);
+    if (this.api && this.role === 'admin') actions.append(this.analyzeItem());
+    actions.addEventListener('keydown', e => {
+      const items = Array.from(actions.querySelectorAll<HTMLElement>('[role=menuitem]')), at = items.indexOf(this.root?.activeElement as HTMLElement);
+      const next = e.key === 'ArrowDown' ? (at + 1) % items.length : e.key === 'ArrowUp' ? (at - 1 + items.length) % items.length : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : -1;
+      if (next < 0 || at < 0) return;
+      e.preventDefault(); items[next].focus();
+    });
+    menu.append(actions);
     if (this.api) {
       const list = h('div', { class: 'list' }, h('p', { class: 'list-title' }, `${t.menuMine}${this.reports ? ` (${this.reports.length})` : ''}`));
       if (this.reports === null) list.append(h('p', { class: 'empty' }, t.loading));
@@ -428,7 +438,7 @@ class Bugframe implements BugframeInstance {
       menu.append(list);
     }
     if ((this.o.enable ?? 'query') === 'query' || this.o.enable === 'storage') {
-      const off = h('button', { type: 'button', role: 'menuitem', class: 'item off' }, t.menuTurnOff);
+      const off = h('button', { type: 'button', class: 'item off' }, t.menuTurnOff);
       off.addEventListener('click', () => this.disable());
       menu.append(off);
     }

@@ -49,8 +49,8 @@ describe('mounting', () => {
 });
 
 describe('accessibility', () => {
-  it('fab is a labelled menu button; menu opens with focus inside and Escape closes it', async () => {
-    make(); const fab = q<HTMLButtonElement>('.fab')!; expect(fab.getAttribute('aria-haspopup')).toBe('menu'); expect(fab.getAttribute('aria-expanded')).toBe('false');
+  it('fab is a labelled button for a popover; it opens with focus inside and Escape closes it', async () => {
+    make(); const fab = q<HTMLButtonElement>('.fab')!; expect(fab.getAttribute('aria-haspopup')).toBe('dialog'); expect(fab.getAttribute('aria-expanded')).toBe('false');
     fab.click(); expect(q('.fab')!.getAttribute('aria-expanded')).toBe('true'); expect(shadow().activeElement?.classList.contains('main')).toBe(true);
     q('.fab-wrap')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.menu')).toBeNull();
   });
@@ -60,7 +60,27 @@ describe('accessibility', () => {
     expect(svg.getAttribute('data-icon')).toBe('bug');
     expect(svg.querySelectorAll('circle, rect, ellipse').length).toBeGreaterThanOrEqual(2); // head and body
     expect(svg.getAttribute('stroke-linecap')).toBe('round'); expect(svg.getAttribute('fill')).toBe('none');
-    expect(q('.fab')!.getAttribute('aria-haspopup')).toBe('menu');
+    expect(q('.fab')!.getAttribute('aria-haspopup')).toBe('dialog');
+  });
+  it('the popover is a labelled dialog; only real menu items sit inside role=menu, and arrow keys move between them', async () => {
+    const reports = [{ id: 'bug-1', status: 'ready_for_review', note: 'Done', createdAt: '2026-01-01T00:00:00Z', description: 'Fix the total', types: [], page: '/a', reviewVersion: 1 }];
+    (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => 'blob:thumb';
+    make({ endpoint: '/api', enable: 'query', fetch: (async (url: string) => (String(url).endsWith('.png') ? new Response(new Blob(['x'])) : jsonRes(String(url).endsWith('/access') ? { role: 'admin' } : { reports }))) as unknown as typeof fetch });
+    inst!.enable(); await flush(); click('.fab'); await flush();
+    const popover = q('.menu')!, menu = popover.querySelector('[role=menu]')!;
+    expect(popover.getAttribute('role')).toBe('dialog'); expect(popover.getAttribute('aria-label')).toBe('My requests');
+    // A menu may only hold menu items: the request list (links, buttons, a text box) and "Turn off" live beside it.
+    expect(Array.from(menu.children).every(child => child.getAttribute('role') === 'menuitem')).toBe(true);
+    expect(menu.children.length).toBe(2);
+    expect(menu.querySelector('textarea, a, ul')).toBeNull();
+    expect(popover.querySelector('.list')!.closest('[role=menu]')).toBeNull();
+    expect(popover.querySelector('.list textarea')).toBeTruthy();
+    expect(q('.menu .off')!.getAttribute('role')).toBeNull(); expect(q('.menu .off')!.closest('[role=menu]')).toBeNull();
+    const [first, second] = Array.from(menu.children) as HTMLElement[];
+    first.focus(); first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); expect(shadow().activeElement).toBe(second);
+    second.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); expect(shadow().activeElement).toBe(first);
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); expect(shadow().activeElement).toBe(second);
+    second.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })); expect(shadow().activeElement).toBe(first);
   });
   it('sheet is a modal dialog with a live region, traps Tab and closes on Escape', async () => {
     await toSheet({ types: ['A'] });
