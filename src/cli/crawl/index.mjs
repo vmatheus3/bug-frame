@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { CliError } from '../commands.mjs';
+import { CliError, shown } from '../commands.mjs';
 import { createFileStorage } from '../../server/storage-fs.mjs';
 import { MAX_ATTACHMENT_BYTES, newReportId } from '../../server/util.mjs';
 import { isLocalUrl, stamp } from '../audit/index.mjs';
@@ -395,10 +395,10 @@ export async function crawlCommand(args, v, { summarize: summarizeFn } = {}) {
       `Crawled ${res.stats.pages} page(s) (${res.stats.routes} route(s)), tested ${res.stats.controlsTested} control(s), skipped ${res.stats.controlsSkippedDestructive} destructive one(s)${res.partial ? ' (partial run)' : ''}.`,
       `Findings: ${f.high} high, ${f.medium} medium, ${f.low} low.${res.baseline ? ` Since the baseline: ${res.baseline.new} new, ${res.baseline.known} known, ${res.baseline.fixed.length} fixed.` : ''}`,
       ...(v['save-baseline'] ? [`Saved the baseline to ${v['save-baseline']}: commit it, then run with --baseline ${v['save-baseline']} --fail-on high so only new findings fail.`] : []),
-      `Wrote ${join(res.out, 'crawl.html')} (open it in a browser), ${join(res.out, 'CRAWL.md')} (hand it to your coding agent) and crawl.json.`];
+      `Wrote ${shown(join(res.out, 'crawl.html'))} (open it in a browser), ${shown(join(res.out, 'CRAWL.md'))} (hand it to your coding agent) and crawl.json.`];
     if (v.summarize) {
       const s = await (summarizeFn ?? (await import('./summary.mjs')).summarize)({ crawl: res, out: res.out, model: v.model ?? 'haiku', budget: v.budget, log: m => console.error(`[crawl] ${m}`) });
-      lines.push(s.degraded ? `SUMMARY.md: the model's answer was not usable (${s.errors.slice(0, 2).join('; ')}); wrote the script-only grouping instead and kept the raw answer in summary-output.txt.` : `Wrote ${join(res.out, 'SUMMARY.md')} (${s.model}, ~${s.estTokens} input tokens, ${s.seconds} s).`);
+      lines.push(s.degraded ? `SUMMARY.md: the model's answer was not usable (${s.errors.slice(0, 2).join('; ')}); wrote the script-only grouping instead and kept the raw answer in summary-output.txt.` : `Wrote ${shown(join(res.out, 'SUMMARY.md'))} (${s.model}, ~${s.estTokens} input tokens, ${s.seconds} s).`);
     }
     if (v.dir) {
       const png = await readFile(join(res.out, 'screens', 'start.png')).catch(() => null);
