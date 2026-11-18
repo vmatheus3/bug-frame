@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { SESSION_COOKIE, startCrawlSite } from './fixtures/crawl-site/server.mjs';
 import { startHostileSite } from './fixtures/crawl-site/hostile.mjs';
 
@@ -13,7 +14,7 @@ let site: Site, work = '';
 test.beforeAll(async () => { site = await startCrawlSite(); work = mkdtempSync(join(tmpdir(), 'bugframe-e2e-crawl-')); });
 test.afterAll(async () => { await site.close(); rmSync(work, { recursive: true, force: true }); });
 
-test('bugframe crawl maps the whole site, finds every planted problem and never lets a write leave the browser', async () => {
+test('bugframe crawl maps the whole site, finds every planted problem and never lets a write leave the browser', async ({ page }) => {
   test.setTimeout(240_000);
   const out = join(work, 'out'), auth = join(work, 'auth.json');
   // A saved session, as `bugframe crawl login` would write it, for the login-protected /account page.
@@ -70,6 +71,18 @@ test('bugframe crawl maps the whole site, finds every planted problem and never 
   expect(md).toContain('## Wiring map');
   expect(md).toMatch(/\| \/ \| Save \| button \| calls-backend \| POST \/api\/save \|/);
   for (const p of crawl.pages) if (p.screenshot) expect(existsSync(join(out, p.screenshot))).toBe(true);
+  // crawl.html in a browser: the filters really hide what they filter out, and the counter matches what is on screen.
+  await page.goto(pathToFileURL(join(out, 'crawl.html')).href);
+  const total = await page.locator('.finding').count(), high = crawl.findings.filter((f: Finding) => f.severity === 'high').length;
+  expect(total).toBe(crawl.findings.length); expect(high).toBeGreaterThan(0); expect(high).toBeLessThan(total);
+  await expect(page.locator('.finding:visible')).toHaveCount(total);
+  await page.locator('#f-sev').selectOption('high');
+  await expect(page.locator('.finding:visible')).toHaveCount(high);
+  await expect(page.locator('#shown')).toHaveText(String(high));
+  await page.locator('#f-text').fill('Export');
+  await expect(page.locator('.finding:visible')).toHaveCount(1);
+  await page.locator('#f-text').fill('nothing matches this text');
+  await expect(page.locator('.finding:visible')).toHaveCount(0);
   // --dir files the crawl in the inbox: a finished page analysis with the short report and a real picture of the start page.
   const [filed] = readdirSync(join(work, 'reports'));
   expect(stdout).toContain(`Filed in the inbox at ${join(work, 'reports')} as ${filed}`);
