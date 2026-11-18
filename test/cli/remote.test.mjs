@@ -270,5 +270,9 @@ test('connect agent: any command gets the new ticket ids, never their text or th
     const retried = await connectCodex({ ...failing, clientFactory: () => new AgentCommandClient({ command: `"${process.execPath}" -e "process.exit(0)"`, project: dir }) });
     assert.equal(retried.seen.length, 2);
     await assert.rejects(() => new AgentCommandClient({ command: '  ', project: dir }).initialize(), /--agent-cmd/);
+    // What the command prints is shown to the person running the listener.
+    const said = [];
+    await new AgentCommandClient({ command: `"${process.execPath}" -e "console.log('triaged ' + process.env.BUGFRAME_REPORT_COUNT)"`, project: dir, say: text => said.push(text) }).notify('agent-command', tickets, config.endpoint);
+    assert.deepEqual(said, ['triaged 2']);
   } finally { if (previous === undefined) delete process.env.BUGFRAME_ADMIN_TOKEN; else process.env.BUGFRAME_ADMIN_TOKEN = previous; await cleanup(dir); }
 });

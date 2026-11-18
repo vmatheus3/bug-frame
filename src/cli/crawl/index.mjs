@@ -318,12 +318,14 @@ export async function fileInInbox({ dir, crawl, png, now = new Date() }) {
   const storage = createFileStorage({ dir }), f = crawl.stats.findings, at = now.toISOString();
   const tally = SEVERITIES.filter(s => f[s]).map(s => `${f[s]} ${s}`).join(', ') || 'no findings';
   const note = `Site crawl: ${tally}.${crawl.findings.length ? ` Top: ${crawl.findings.slice(0, 3).map(x => `${x.id} ${x.title}`).join('; ')}.` : ''} Full report: audit.md.`.slice(0, 2000);
+  // The viewport the controls were clicked at (the widest), as the inbox shows it for any request.
+  const [widest] = (crawl.limits?.viewports ?? []).map(v => String(v).split('x').map(Number)).filter(v => v.length === 2 && v.every(Number.isFinite)).sort((a, b) => b[0] - a[0]);
   let markdown = crawlMarkdown(crawl, { brief: true });
   if (Buffer.byteLength(markdown) > MAX_ATTACHMENT_BYTES) markdown = `${Buffer.from(markdown).subarray(0, MAX_ATTACHMENT_BYTES - 200).toString('utf8')}\n\n(Shortened: the full report is CRAWL.md.)\n`;
   for (let attempt = 0; ; attempt++) {
     const id = newReportId(now);
     const report = { id, status: 'ready_for_review', note, createdAt: at, reporter: 'admin:cli', description: `Site crawl: ${crawl.origin} (${crawl.stats.pages} page${crawl.stats.pages === 1 ? '' : 's'})`, kind: 'audit', currentText: '', suggestedText: '', reviewVersion: 1, reviewNote: '',
-      activity: [{ status: 'ready_for_review', note, at, by: 'developer' }], types: ['Site crawl'], context: { url: `${crawl.origin}${crawl.start}`, title: 'Site crawl', viewport: null, scroll: null, region: null, userAgent: 'bugframe crawl', language: '', capturedAt: at, elements: [], consoleErrors: [], metadata: {} },
+      activity: [{ status: 'ready_for_review', note, at, by: 'developer' }], types: ['Site crawl'], context: { url: `${crawl.origin}${crawl.start}`, title: 'Site crawl', viewport: widest ? { w: widest[0], h: widest[1], dpr: 1 } : null, scroll: null, region: null, userAgent: 'bugframe crawl', language: '', capturedAt: at, elements: [], consoleErrors: [], metadata: {} },
       files: { region: 'region.png', full: 'full.png', audit: 'audit.md' }, audit: { attempts: 1, startedAt: crawl.startedAt, finishedAt: at, degraded: false, counts: { blocker: 0, high: f.high, medium: f.medium, low: f.low } } };
     try { await storage.create(report, { region: png ?? BLANK_PNG, full: png ?? BLANK_PNG }); await storage.writeAttachment(id, 'audit.md', Buffer.from(markdown)); return id; }
     catch (e) { if (e?.code !== 'EXISTS' || attempt >= 4) throw e; }

@@ -34,7 +34,7 @@ export async function doctor({ dir = './bug-reports', project, node = process.ve
   else if (older(pw.version, '1.48')) add('problem', `Playwright ${pw.version}: audit and crawl need 1.48 or newer (they must block WebSockets). Update it with: npm i -D playwright@latest`);
   else if (!pw.chromium) add('problem', `Playwright ${pw.version}: its Chromium is not downloaded. Run: npx playwright install chromium`);
   else add('ok', `Playwright ${pw.version} with Chromium (audit, crawl)`);
-  if (onPath('claude')) add('ok', 'Claude Code (claude): the blind auditor for audit and the fix plan of crawl --summarize. Check its isolation with: bugframe audit --check-blind');
+  if (onPath('claude')) add('ok', 'Claude Code (claude): auditor for audit, fix plan for crawl --summarize. Verify: bugframe audit --check-blind');
   else add('missing', 'Claude Code (claude): not on PATH, so audit writes the measured report only (--agent none) and crawl --summarize is unavailable; --agent-cmd runs another auditor');
   if (onPath('codex')) add('ok', 'Codex CLI (codex): for connect codex');
   else add('missing', 'Codex CLI (codex): only needed for connect codex; connect agent --agent-cmd runs any other agent or script');

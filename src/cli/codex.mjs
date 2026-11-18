@@ -20,14 +20,16 @@ const KINDS = ['bug', 'content', 'design', 'idea', 'audit'];
  * Bugframe) or the private credential. Exit code 0 acknowledges the batch; anything else keeps it queued.
  */
 export class AgentCommandClient {
-  constructor({ command, project, timeoutMs = 600_000, run = runProcess } = {}) { Object.assign(this, { command: String(command ?? ''), project, timeoutMs, run, label: 'The agent command' }); }
+  constructor({ command, project, timeoutMs = 600_000, run = runProcess, say = text => console.log(text) } = {}) { Object.assign(this, { command: String(command ?? ''), project, timeoutMs, run, say, label: 'The agent command' }); }
   async initialize() { if (!this.command.trim()) throw new CliError('Give the command to run for new tickets: --agent-cmd "COMMAND".'); }
   async inbox() { return 'agent-command'; }
   async notify(_thread, reports, endpoint) {
     const list = reports.map(report => ({ id: report.id, kind: KINDS.includes(report.kind) ? report.kind : 'feedback' }));
     try {
-      await this.run(this.command, [], { cwd: this.project, shell: true, timeoutMs: this.timeoutMs, input: `${JSON.stringify({ endpoint, reports: list })}\n`,
+      const output = await this.run(this.command, [], { cwd: this.project, shell: true, timeoutMs: this.timeoutMs, input: `${JSON.stringify({ endpoint, reports: list })}\n`,
         env: { BUGFRAME_REPORT_IDS: list.map(report => report.id).join(' '), BUGFRAME_REPORT_COUNT: String(list.length), BUGFRAME_API: endpoint } });
+      // What the command printed, for the person watching the listener (it is their own command's output).
+      if (output.trim()) this.say(output.trim().slice(0, 4000));
     } catch (cause) {
       const detail = /exited with code (\d+)/.exec(String(cause?.message))?.[1];
       const error = new CliError(`The agent command did not finish successfully (${detail ? `exit code ${detail}` : /did not finish within/.test(String(cause?.message)) ? 'timed out' : 'could not run'}). These tickets stay queued and are sent again.`);

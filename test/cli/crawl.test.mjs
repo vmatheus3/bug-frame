@@ -282,7 +282,7 @@ test('crawl --dir files the crawl in the private inbox as a finished page analys
   const { parseMarkdown } = await import('../../src/server/inbox/markdown.js');
   const dir = await tmpDir();
   try {
-    const crawl = sampleCrawl();
+    const crawl = sampleCrawl(); crawl.limits.viewports = ['390x844', '1440x900'];
     const id = await fileInInbox({ dir, crawl, png: null, now: new Date('2026-11-18T10:00:00Z') });
     assert.match(id, /^bug-20261118-100000-[a-f0-9]{4}$/);
     const storage = createFileStorage({ dir }), r = await storage.get(id);
@@ -290,6 +290,7 @@ test('crawl --dir files the crawl in the private inbox as a finished page analys
     assert.match(r.description, /^Site crawl: http:\/\/127\.0\.0\.1:4000 \(1 page\)$/);
     assert.match(r.note, /^Site crawl: 1 high\. Top: C1 .*Full report: audit\.md\.$/);
     assert.deepEqual(r.audit.counts, { blocker: 0, high: 1, medium: 0, low: 0 });
+    assert.deepEqual(r.context.viewport, { w: 1440, h: 900, dpr: 1 }, 'the viewport the controls were clicked at');
     assert.deepEqual(auditQueue(await storage.list()), [], 'it is a result, not a request: the audit watcher leaves it alone');
     const md = (await storage.readFile(id, 'audit.md')).toString();
     assert.match(md, /^# Site crawl: http:\/\/127\.0\.0\.1:4000/); assert.match(md, /## Findings/); assert.doesNotMatch(md, /## Wiring map|## Pages/, 'the inbox copy is the short report');

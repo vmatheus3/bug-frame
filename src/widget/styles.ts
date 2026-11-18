@@ -32,7 +32,6 @@ button { font: inherit; color: inherit; }
 .menu button.item svg { width: 18px; height: 18px; flex: none; }
 .menu .actions { display: flex; flex-direction: column; flex: none; border-bottom: 1px solid var(--bf-line); }
 .menu .main { font-weight: 600; }
-.menu .analyze { border-top: 1px solid var(--bf-line); }
 .menu .off { color: var(--bf-muted); border-top: 1px solid var(--bf-line); font-size: 14px; }
 .list { padding: 8px 14px; }
 .list-title { margin: 4px 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--bf-muted); }
