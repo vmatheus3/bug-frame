@@ -4,6 +4,7 @@ import { readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { ID_RE } from '../server/util.mjs';
+import { shown } from './commands.mjs';
 import { loadPlaywright } from './audit/probe.mjs';
 import { onPath as findOnPath } from './audit/runner.mjs';
 
@@ -26,8 +27,8 @@ export async function doctor({ dir = './bug-reports', project, node = process.ve
   const rows = [], add = (state, text) => rows.push(`${state.padEnd(9)}${text}`);
   if (older(node, '18.17')) add('problem', `Node.js ${node}: Bugframe needs 18.17 or newer`); else add('ok', `Node.js ${node}`);
   const folder = resolve(dir);
-  try { const n = (await readdir(folder)).filter(name => ID_RE.test(name)).length; add('ok', `Reports folder ${folder}: ${n} report${n === 1 ? '' : 's'}`); }
-  catch { add('missing', `Reports folder ${folder}: it is created by the first report (or point --dir / BUGFRAME_DIR at the right one)`); }
+  try { const n = (await readdir(folder)).filter(name => ID_RE.test(name)).length; add('ok', `Reports folder ${shown(folder)}: ${n} report${n === 1 ? '' : 's'}`); }
+  catch { add('missing', `Reports folder ${shown(folder)}: it is created by the first report (or point --dir / BUGFRAME_DIR at the right one)`); }
   const pw = await playwright(project).catch(() => null);
   if (!pw) add('missing', 'Playwright: needed for audit and crawl. Install it with: npm i -D playwright && npx playwright install chromium');
   else if (older(pw.version, '1.48')) add('problem', `Playwright ${pw.version}: audit and crawl need 1.48 or newer (they must block WebSockets). Update it with: npm i -D playwright@latest`);

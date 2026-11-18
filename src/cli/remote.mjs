@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { CliError } from './commands.mjs';
+import { CliError, shown } from './commands.mjs';
 import { createFileStorage } from '../server/storage-fs.mjs';
 import { ATTACHMENT_NAMES, ID_RE, isActionable, isOpen, isPng } from '../server/util.mjs';
 import { buildReproSpec, buildWorklist, oneLine, parseBudget } from './worklist.mjs';
@@ -146,7 +146,7 @@ export async function remoteExport({ out, all = false, budget, playwright = fals
   }
   await writeFile(target, buildWorklist(rows, { dir, out: target, label: all ? 'total' : 'open', now, budgetChars, command: `bugframe --remote ${api.root}` }), { mode: 0o600 });
   let spec; if (playwright && rows.length) { spec = target.replace(/\.md$/i, '') + '.repro.spec.mjs'; await writeFile(spec, buildReproSpec(rows), { mode: 0o600 }); }
-  return { path: target, count: rows.length, skipped, message: `Wrote ${target}: ${rows.length} report${rows.length === 1 ? '' : 's'} from ${api.root}${spec ? `; repro spec ${spec}` : ''}${skipped.length ? `; skipped ${skipped.length} (${skipped.join('; ')})` : ''}.\nTheir pictures and report.json are next to it in ${dir}: customer screenshots, so keep that folder private and out of git. Hand work back with: bugframe --remote ${api.root} ready <id> --note "..."` };
+  return { path: target, count: rows.length, skipped, message: `Wrote ${shown(target)}: ${rows.length} report${rows.length === 1 ? '' : 's'} from ${api.root}${spec ? `; repro spec ${shown(spec)}` : ''}${skipped.length ? `; skipped ${skipped.length} (${skipped.join('; ')})` : ''}.\nTheir pictures and report.json are next to it in ${shown(dir)}: customer screenshots, so keep that folder private and out of git. Hand work back with: bugframe --remote ${api.root} ready <id> --note "..."` };
 }
 
 /**

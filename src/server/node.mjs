@@ -36,5 +36,5 @@ export const expressMiddleware = toNodeListener;
 export function routeHandlers(bf, { trustProxy = false } = {}) {
   const run = req => bf.handle(req, {});
   void trustProxy;
-  return { GET: run, POST: run, PATCH: run, OPTIONS: run };
+  return { GET: run, POST: run, PUT: run, PATCH: run, OPTIONS: run };
 }

@@ -1,11 +1,13 @@
 import { access, mkdir, writeFile, readFile } from 'node:fs/promises';
-import { join, resolve, basename } from 'node:path';
+import { isAbsolute, join, relative, resolve, basename } from 'node:path';
 import { createFileStorage } from '../server/storage-fs.mjs';
 import { FEEDBACK_KINDS, ID_RE, FILE_NAMES, isOpen, isActionable, cleanContext, isPng, text } from '../server/util.mjs';
 import { buildReproSpec, buildWorklist, oneLine, parseBudget, showText } from './worklist.mjs';
 import { readZip } from './zip-read.mjs';
 
 export class CliError extends Error {}
+/** A path as a person reads it: relative to where they are when it is below that folder, absolute otherwise. */
+export const shown = path => { const rel = relative(process.cwd(), resolve(path)); return rel && !rel.startsWith('..') && !isAbsolute(rel) ? `./${rel}` : resolve(path); };
 
 export function openStore(dir) { return createFileStorage({ dir }); }
 

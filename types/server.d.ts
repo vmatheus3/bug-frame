@@ -154,7 +154,7 @@ export function createFileStorage(options: { dir: string }): StorageAdapter;
 export function createMemoryStorage(): StorageAdapter;
 export function toNodeListener(bf: Pick<Bugframe, 'handle' | 'matches' | 'basePath'>, options?: { trustProxy?: boolean }): (req: any, res: any, next?: (err?: unknown) => void) => Promise<void>;
 export const expressMiddleware: typeof toNodeListener;
-export function routeHandlers(bf: Bugframe): { GET: (req: Request) => Promise<Response>; POST: (req: Request) => Promise<Response>; PATCH: (req: Request) => Promise<Response>; OPTIONS: (req: Request) => Promise<Response> };
+export function routeHandlers(bf: Bugframe): { GET: (req: Request) => Promise<Response>; POST: (req: Request) => Promise<Response>; PATCH: (req: Request) => Promise<Response>; PUT: (req: Request) => Promise<Response>; OPTIONS: (req: Request) => Promise<Response> };
 export function newReportId(now?: Date): string;
 export function summarize(report: Report): { id: string; status: ReportStatus; note: string; createdAt: string; description: string; types: string[]; page: string; kind: FeedbackKind; currentText: string; suggestedText: string; reviewVersion: number; reviewNote: string; activity: NonNullable<Report['activity']> };
 export function cleanContext(input: unknown): Report['context'];
