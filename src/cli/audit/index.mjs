@@ -154,8 +154,9 @@ export async function watchAudits({ dir, storage, once = false, intervalMs = 500
 export { stamp };
 
 /** The `bugframe audit` command line. */
-export async function auditCommand(url, v, dir, { checkBlind } = {}) {
-  if (v.remote) throw new CliError('bugframe audit works on a local reports folder (--dir). Remote mode is not supported because the API has no route for uploading results; run it where the reports folder lives.');
+export async function auditCommand(url, v, dir, { checkBlind, remoteStorage } = {}) {
+  if (v.remote && !v.watch) throw new CliError('--remote works with audit --watch: it processes "Analyze this page" requests from a hosted API. To audit one page, give its URL (and --base-url for your local server).');
+  if (v.remote && v.dir) throw new CliError('--remote and --dir cannot be combined.');
   if (v['check-blind']) {
     const r = await (checkBlind ?? (await import('./runner.mjs')).checkBlind)({ model: v.model });
     console.log(r.lines.join('\n'));
@@ -184,8 +185,10 @@ export async function auditCommand(url, v, dir, { checkBlind } = {}) {
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     if (v.watch) {
-      log(`watching ${resolve(dir)} for page-analysis requests${v.once ? ' (once)' : '; Ctrl+C to stop'}`);
-      const n = await watchAudits({ dir, once: v.once, baseUrl: v['base-url'], out: v.out, ...common });
+      // Remote: the hosted API is the queue and the store; results are uploaded through its admin-only route.
+      const storage = v.remote ? (remoteStorage ?? (await import('../remote.mjs')).createRemoteStorage)({ endpoint: v.remote, token: await (await import('../remote.mjs')).remoteCredentials(v.credentials), allowInsecureLocalhost: v['allow-localhost'] }) : undefined;
+      log(`watching ${storage ? storage.root : resolve(dir)} for page-analysis requests${v.once ? ' (once)' : '; Ctrl+C to stop'}`);
+      const n = await watchAudits({ dir, storage, once: v.once, baseUrl: v['base-url'], out: v.out, ...common });
       return `Processed ${n} page-analysis request${n === 1 ? '' : 's'}${controller.signal.aborted ? ' (stopped)' : ''}.`;
     }
     return await auditOne(v['base-url'] ? targetUrl(url, v['base-url']) : url, v, common);

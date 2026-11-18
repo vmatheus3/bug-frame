@@ -9,7 +9,7 @@ import { toNodeListener } from '../server/node.mjs';
 import { CliError, cmdClose, cmdExport, cmdImport, cmdList, cmdReady, cmdReopen, cmdShow } from './commands.mjs';
 import { setupProject } from './setup.mjs';
 import { connectCodex } from './codex.mjs';
-import { remoteCommand, remoteCredentials } from './remote.mjs';
+import { remoteCommand, remoteCredentials, remoteExport } from './remote.mjs';
 import { auditCommand } from './audit/index.mjs';
 import { crawlCommand } from './crawl/index.mjs';
 
@@ -42,6 +42,8 @@ Commands:
                                        rewrites the origin or --allow-remote accepts a remote one
   audit --watch --dir REPORTS --project FOLDER [--base-url http://localhost:3000] [--once] [--allow-remote]
                                        process "Analyze this page" requests from the widget
+  audit --watch --remote HTTPS_API --project FOLDER --base-url http://localhost:3000
+                                       the same against a hosted API: results are uploaded to it
   audit --check-blind [--model ID]     prove on this machine that the auditor is blind and confined
   crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]...
         [--viewports 390x844,1440x900] [--storage-state FILE] [--no-click] [--max-controls-per-page 60]
@@ -61,7 +63,8 @@ Commands:
 
 Options:
   --dir <folder>   reports folder (env BUGFRAME_DIR, default ./bug-reports)
-  --remote <HTTPS URL>   operate on a hosted API (list/show/close/ready/reopen); excludes --dir
+  --remote <HTTPS URL>   operate on a hosted API (list/show/export/close/ready/reopen, audit --watch); excludes --dir
+                        export copies the open requests and pictures to ./bugframe-remote/ (or --out FILE's folder)
   --credentials <file>  private JSON file containing adminToken (or BUGFRAME_ADMIN_TOKEN)
   --timeout <ms>        remote request timeout, default 30000
   -h, --help       this text          -v, --version   print the version
@@ -93,13 +96,14 @@ async function main(argv) {
     try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal }); return null; }
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   }
-  if (cmd === 'audit') return auditCommand(arg, values, dir);
+  if (cmd === 'audit') return auditCommand(arg, { ...values, dir: values.dir }, dir);
   if (cmd === 'crawl') return crawlCommand(positionals.slice(1), values);
   if (values.remote) {
     if (values.dir) throw new CliError('--remote and --dir cannot be combined.');
-    if (!['list', 'show', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, close, ready and reopen only.');
+    if (!['list', 'show', 'export', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, export, close, ready and reopen (and audit --watch).');
     const token = await remoteCredentials(values.credentials);
-    return remoteCommand(cmd, arg, { endpoint: values.remote, token, timeoutMs: Number(values.timeout ?? 30000), json: values.json, open: values.open, note: values.note, status: values.status });
+    if (cmd === 'export') return (await remoteExport({ endpoint: values.remote, token, timeoutMs: Number(values.timeout ?? 30000), allowInsecureLocalhost: values['allow-localhost'], all: values.all, out: values.out, budget: values.budget, playwright: values.playwright })).message;
+    return remoteCommand(cmd, arg, { endpoint: values.remote, token, timeoutMs: Number(values.timeout ?? 30000), allowInsecureLocalhost: values['allow-localhost'], json: values.json, open: values.open, note: values.note, status: values.status });
   }
   if (values.credentials || values.timeout) throw new CliError('--credentials and --timeout require --remote.');
   switch (cmd) {

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createFileInvitationStorage, invitationEmail, invitationService } from './invitations.mjs';
 import { createNotifications } from './notifications.mjs';
 import { createFileStorage } from './storage-fs.mjs';
-import { ADMIN_KINDS, FEEDBACK_KINDS, ID_RE, STATUSES, isOpen, cleanContext, decodePng, newReportId, safeEqual, summarize, text } from './util.mjs';
+import { ADMIN_KINDS, ATTACHMENT_NAMES, FEEDBACK_KINDS, ID_RE, MAX_ATTACHMENT_BYTES, STATUSES, isOpen, cleanAudit, cleanContext, decodePng, newReportId, safeEqual, summarize, text } from './util.mjs';
 
 const MB = 1024 * 1024;
 const DEFAULTS = { maxBodyBytes: 24 * MB, maxImageBytes: 10 * MB, maxDescription: 4000, rateLimit: { max: 10, windowMs: 60_000 } };
@@ -90,6 +90,20 @@ export function createBugframe(options = {}) {
     try { return { body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }; } catch { return { error: err(400, 'bad_json', 'The body is not valid JSON.') }; }
   }
 
+  /** A request body as bytes, refused while streaming once it passes `max`. */
+  async function readBytes(req, max) {
+    if (Number(req.headers.get('content-length') ?? 0) > max) return { error: err(413, 'too_large', 'The file is too large.') };
+    if (!req.body) return { error: err(400, 'empty', 'Empty body.') };
+    const reader = req.body.getReader(), chunks = []; let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      size += value.length;
+      if (size > max) { try { await reader.cancel(); } catch { /* already closed */ } return { error: err(413, 'too_large', 'The file is too large.') }; }
+      chunks.push(value);
+    }
+    return { buffer: Buffer.concat(chunks) };
+  }
+
   const notifications = createNotifications({ webhook: o.webhook, storage, serial, request: o.fetch ?? fetch, now, logger: log });
 
   // ---- routes
@@ -142,6 +156,29 @@ export function createBugframe(options = {}) {
     return new Response(buf, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", 'content-length': String(buf.length) } });
   }
 
+  /**
+   * The result of a page analysis, uploaded by `bugframe audit --watch --remote` from the machine that has the code.
+   * Admin only; exactly audit.md (Markdown text) or audit.json (JSON); only for a page-analysis request; only when the
+   * storage adapter opted in to attachments; bounded while streaming. The inbox shows the Markdown as text.
+   */
+  async function auditUpload(req, who, id, name) {
+    if (who.role !== 'admin') return err(403, 'forbidden', 'Admin only.');
+    if (!ID_RE.test(id) || typeof storage.writeAttachment !== 'function') return err(404, 'not_found', 'Not found.');
+    const type = req.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+    if (type !== (name === 'audit.json' ? 'application/json' : 'text/markdown')) return err(415, 'unsupported_media_type', name === 'audit.json' ? 'Send application/json.' : 'Send text/markdown.');
+    const { buffer, error } = await readBytes(req, MAX_ATTACHMENT_BYTES); if (error) return error;
+    let content; try { content = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { return err(400, 'bad_attachment', 'The file is not valid UTF-8 text.'); }
+    if (content.includes('\0')) return err(400, 'bad_attachment', 'The file is not text.');
+    if (name === 'audit.json') { try { JSON.parse(content); } catch { return err(400, 'bad_attachment', 'The file is not valid JSON.'); } }
+    return serial(id, async () => {
+      const current = await storage.get(id); if (!current) return err(404, 'not_found', 'Not found.');
+      if (current.kind !== 'audit') return err(409, 'not_an_audit', 'Only page-analysis requests take an analysis result.');
+      await storage.writeAttachment(id, name, buffer);
+      if (name === 'audit.md' && current.files?.audit !== 'audit.md') await storage.update(id, { files: { ...(current.files ?? {}), audit: 'audit.md' } });
+      return json(200, { id, file: name });
+    });
+  }
+
   async function patch(req, id) {
     if (!ID_RE.test(id)) return err(404, 'not_found', 'Not found.');
     const { body, error } = await readJsonBody(req); if (error) return error;
@@ -149,12 +186,16 @@ export function createBugframe(options = {}) {
     if (!STATUSES.includes(status) || status === 'approved') return err(400, 'bad_status', 'Choose a developer status. Only the reporter can approve a review.');
     const note = text(body?.note, 2000).trim();
     if (status === 'ready_for_review' && !note) return err(400, 'note_required', 'Explain what changed before asking for review.');
+    // Optional bookkeeping from the page-analysis watcher (attempts, counts): a fixed shape, audit requests only.
+    const audit = body?.audit === undefined ? undefined : cleanAudit(body.audit);
+    if (audit === null) return err(400, 'bad_audit', 'Invalid page-analysis details.');
     return serial(id, async () => {
       const current = await storage.get(id); if (!current) return err(404, 'not_found', 'Not found.');
+      if (audit && current.kind !== 'audit') return err(400, 'bad_audit', 'Only page-analysis requests carry analysis details.');
       const at = now().toISOString();
       const next = await storage.update(id, { status, note, closedAt: isOpen(status) ? null : at,
         reviewVersion: (current.reviewVersion ?? 0) + (status === 'ready_for_review' ? 1 : 0),
-        activity: [...(current.activity ?? []), { status, note, at, by: 'developer' }].slice(-100),
+        activity: [...(current.activity ?? []), { status, note, at, by: 'developer' }].slice(-100), ...(audit ? { audit } : {}),
       });
       return json(200, { id: next.id, status: next.status, note: next.note, reviewVersion: next.reviewVersion });
     });
@@ -243,6 +284,7 @@ export function createBugframe(options = {}) {
         if (parts.length === 1 && req.method === 'GET') return withCors(await list(req, who, url));
         if (parts.length === 3 && req.method === 'GET' && (parts[2] === 'region.png' || parts[2] === 'full.png')) return withCors(await image(req, who, parts[1], parts[2]));
         if (parts.length === 3 && req.method === 'GET' && parts[2] === 'audit.md') return withCors(await auditMarkdown(who, parts[1]));
+        if (parts.length === 3 && req.method === 'PUT' && ATTACHMENT_NAMES.includes(parts[2])) return withCors(await auditUpload(req, who, parts[1], parts[2]));
         if (parts.length === 2 && req.method === 'GET') {
           if (who.role !== 'admin') return withCors(err(403, 'forbidden', 'Admin only.'));
           if (!ID_RE.test(parts[1])) return withCors(err(404, 'not_found', 'Not found.'));
