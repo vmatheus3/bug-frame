@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { signIn } from './session';
@@ -289,6 +289,18 @@ test('developer page analysis: the admin-only menu item queues it, audit --watch
   await page.locator('#reports button').filter({ hasText: 'Page analysis requested' }).click();
   await expect(page.locator('#reports .request-kind[data-kind="audit"]').first()).toHaveText('Page analysis');
   await expect(page.locator('#audit-panel')).toBeVisible();
-  await expect(page.locator('#audit-text')).toContainText('# Page audit: http://127.0.0.1:4455/');
+  // The report is rendered, not dumped: a heading, a findings table with severity labels, no Markdown syntax left over.
+  await expect(page.locator('#audit-text h3')).toHaveText(/^Page audit: http:\/\/127\.0\.0\.1:4455\//);
+  await expect(page.locator('#audit-text .md-table tbody tr').first()).toContainText('F1');
+  await expect(page.locator('#audit-text .md-table .sev').first()).toHaveText(/high|medium|low/);
+  await expect(page.locator('#audit-text')).not.toContainText('| F1 |');
   await expect(page.locator('#audit-waiting')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Copy analysis as Markdown' })).toBeVisible();
+  // A report quotes the audited page, so its text is untrusted: markup in it must only ever be shown as text.
+  writeFileSync(join(DIR, done.id, 'audit.md'), '# Page audit: <img src=x onerror="window.__xss=1">\n\n[open](javascript:window.__xss=2) <script>window.__xss=3</script>\n\n| # | Finding |\n|---|---|\n| F1 | <svg onload="window.__xss=4"> |\n');
+  await page.locator('#refresh').click();
+  await expect(page.locator('#audit-text h3')).toHaveText('Page audit: <img src=x onerror="window.__xss=1">');
+  await expect(page.locator('#audit-text td').nth(1)).toHaveText('<svg onload="window.__xss=4">');
+  expect(await page.locator('#audit-text :is(img, script, svg, a, iframe)').count()).toBe(0);
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
 });
