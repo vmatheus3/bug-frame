@@ -51,7 +51,7 @@ Commands:
   crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]...
         [--viewports 390x844,1440x900] [--storage-state FILE] [--no-click] [--max-controls-per-page 60]
         [--concurrency 2] [--timeout MS] [--settle-ms 700] [--max-minutes 30] [--fail-on high|medium|low|none]
-        [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
+        [--baseline FILE] [--save-baseline FILE] [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
                                        whole-site check, no AI tokens: opens every page (same-origin,
                                        one route per id pattern, max 2 each), clicks every safe control
                                        (writes blocked, destructive and sign-out skipped) and reports dead
@@ -82,7 +82,7 @@ async function main(argv) {
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
       viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' }, 'allow-remote': { type: 'boolean' },
       'max-pages': { type: 'string' }, 'max-depth': { type: 'string' }, include: { type: 'string', multiple: true }, exclude: { type: 'string', multiple: true }, 'storage-state': { type: 'string' }, 'max-controls-per-page': { type: 'string' },
-      concurrency: { type: 'string' }, 'max-minutes': { type: 'string' }, 'settle-ms': { type: 'string' }, 'fail-on': { type: 'string' }, summarize: { type: 'boolean' }, save: { type: 'string' },
+      concurrency: { type: 'string' }, 'max-minutes': { type: 'string' }, 'settle-ms': { type: 'string' }, baseline: { type: 'string' }, 'save-baseline': { type: 'string' }, 'fail-on': { type: 'string' }, summarize: { type: 'boolean' }, save: { type: 'string' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
   });
@@ -102,7 +102,7 @@ async function main(argv) {
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   }
   if (cmd === 'audit') return auditCommand(arg, { ...values, dir: values.dir }, dir);
-  if (cmd === 'crawl') return crawlCommand(positionals.slice(1), values);
+  if (cmd === 'crawl') { if (values.remote) throw new CliError('crawl runs against a site, not the hosted API: use --dir REPORTS to file the result in a local inbox.'); return crawlCommand(positionals.slice(1), values); }
   if (values.remote) {
     if (values.dir) throw new CliError('--remote and --dir cannot be combined.');
     if (!['list', 'show', 'export', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, export, close, ready and reopen (and audit --watch).');

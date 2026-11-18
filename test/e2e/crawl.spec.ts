@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SESSION_COOKIE, startCrawlSite } from './fixtures/crawl-site/server.mjs';
@@ -18,7 +18,7 @@ test('bugframe crawl maps the whole site, finds every planted problem and never 
   const out = join(work, 'out'), auth = join(work, 'auth.json');
   // A saved session, as `bugframe crawl login` would write it, for the login-protected /account page.
   writeFileSync(auth, JSON.stringify({ cookies: [{ name: SESSION_COOKIE, value: 'ok', domain: '127.0.0.1', path: '/', expires: -1, httpOnly: true, secure: false, sameSite: 'Lax' }], origins: [] }));
-  const { code, stdout } = await new Promise<{ code: number; stdout: string }>(r => execFile(process.execPath, ['src/cli/bin.mjs', 'crawl', `${site.base}/`, '--out', out, '--storage-state', auth, '--fail-on', 'high'], { timeout: 220_000 },
+  const { code, stdout } = await new Promise<{ code: number; stdout: string }>(r => execFile(process.execPath, ['src/cli/bin.mjs', '--dir', join(work, 'reports'), 'crawl', `${site.base}/`, '--out', out, '--storage-state', auth, '--fail-on', 'high'], { timeout: 220_000 },
     (err, so) => r({ code: err ? Number((err as { code?: number }).code) : 0, stdout: so })));
   expect(stdout).toContain('crawl.html');
   expect(code).toBe(1); // --fail-on high and there are high findings
@@ -70,6 +70,13 @@ test('bugframe crawl maps the whole site, finds every planted problem and never 
   expect(md).toContain('## Wiring map');
   expect(md).toMatch(/\| \/ \| Save \| button \| calls-backend \| POST \/api\/save \|/);
   for (const p of crawl.pages) if (p.screenshot) expect(existsSync(join(out, p.screenshot))).toBe(true);
+  // --dir files the crawl in the inbox: a finished page analysis with the short report and a real picture of the start page.
+  const [filed] = readdirSync(join(work, 'reports'));
+  expect(stdout).toContain(`Filed in the inbox at ${join(work, 'reports')} as ${filed}`);
+  const report = JSON.parse(readFileSync(join(work, 'reports', filed, 'report.json'), 'utf8'));
+  expect(report).toMatchObject({ kind: 'audit', status: 'ready_for_review', files: { audit: 'audit.md' } });
+  expect(readFileSync(join(work, 'reports', filed, 'audit.md'), 'utf8')).toMatch(/^# Site crawl: http:\/\/127\.0\.0\.1:\d+/);
+  expect(readFileSync(join(work, 'reports', filed, 'full.png')).length).toBeGreaterThan(2000);
 });
 
 // The hostile fixture tries every way around the guard. Its two servers record what reached them.
@@ -152,5 +159,13 @@ test.describe('crawl guard against a hostile site', () => {
     expect(data.findings.map((f: { type: string }) => f.type)).toContain('offsite-redirect');
     expect(data.pages[0]).toMatchObject({ path: '/out', status: 302 });
     expect(stdout).toContain('crawl.html');
+    // A baseline turns --fail-on into a ratchet: the same findings fail a plain run and pass a baselined one.
+    const baseline = join(dir, 'crawl-baseline.json'), args = [`${hostile.base}/out`, '--viewports', '1280x800', '--no-click', '--fail-on', 'low'];
+    const plain = await crawl([...args, '--out', join(dir, 'out-plain'), '--save-baseline', baseline]);
+    expect(plain.code).toBe(1); expect(plain.stdout).toContain('Saved the baseline');
+    expect(Object.values(JSON.parse(readFileSync(baseline, 'utf8')).fingerprints)).toContainEqual(expect.objectContaining({ type: 'offsite-redirect', severity: 'low' }));
+    const ratchet = await crawl([...args, '--out', join(dir, 'out-ratchet'), '--baseline', baseline]);
+    expect(ratchet.code).toBe(0); expect(ratchet.stdout).toMatch(/Since the baseline: 0 new, 1 known, 0 fixed/);
+    expect((await crawl([...args, '--out', join(dir, 'out-bad'), '--baseline', join(dir, 'missing.json')])).code).toBe(2);
   });
 });

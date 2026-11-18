@@ -1,5 +1,7 @@
 // What a click did, and the whole-site checks: dead wiring, broken routes, and inconsistencies between pages
 // (navigation, labels, actions, titles, repeated errors, failing endpoints). Pure functions over the crawl data.
+import { createHash } from 'node:crypto';
+import { CliError } from '../commands.mjs';
 import { FIXES } from '../audit/report.mjs';
 import { routeTemplate, shortUrl } from './urls.mjs';
 
@@ -201,7 +203,37 @@ export function analyze({ pages, linkStatus = new Map(), sitemap = [], settleMs 
   }
 
   out.sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity) || b.pages.length - a.pages.length);
-  return out.map((f, i) => ({ id: `C${i + 1}`, ...f }));
+  return out.map((f, i) => ({ id: `C${i + 1}`, fingerprint: fingerprint(f), ...f }));
+}
+
+/**
+ * A finding's identity between runs: its type, element and title with numbers blurred, plus its route when it is on
+ * one route only. "The same error on 9 pages" and "… on 10 pages" are one finding; the same dead button on another
+ * route is another. Ids (C1, C2…) are positions in one report and change from run to run; fingerprints do not.
+ */
+export function fingerprint(f) {
+  const blur = s => String(s ?? '').replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().toLowerCase();
+  const title = blur(f.title).replace(/ on n pages?(\b|$)/g, '').replace(/ \(and n similar\)/g, '').replace(/ differs on n page\(s\)/g, ' differs').replace(/ fails on n page\(s\).*$/g, ' fails').replace(/ leads to n different places/g, ' leads to different places');
+  return createHash('sha256').update([f.type, blur(f.selector), title, (f.routes ?? []).length === 1 ? f.routes[0] : '*'].join('\n')).digest('hex').slice(0, 12);
+}
+
+/** What `--save-baseline` writes: fingerprints with the type, severity and title that explain them. No screenshots, no evidence. */
+export function baselineOf(findings, now = new Date()) {
+  return { tool: 'bugframe crawl baseline', createdAt: now.toISOString(), fingerprints: Object.fromEntries(findings.map(f => [f.fingerprint, { type: f.type, severity: f.severity, title: String(f.title).slice(0, 200) }])) };
+}
+
+/**
+ * Compare this run with a baseline (a `--save-baseline` file or an earlier crawl.json). Marks each finding `new: true`
+ * or `new: false` and returns { new, known, fixed: [{ fingerprint, type, severity, title }] }.
+ */
+export function applyBaseline(findings, baseline) {
+  const known = baseline?.fingerprints && typeof baseline.fingerprints === 'object' ? baseline.fingerprints
+    : Array.isArray(baseline?.findings) ? Object.fromEntries(baseline.findings.map(f => [f.fingerprint ?? fingerprint(f), { type: f.type, severity: f.severity, title: f.title }])) : null;
+  if (!known) throw new CliError('--baseline is not a crawl baseline: give a file written by --save-baseline, or an earlier crawl.json.');
+  const now = new Set();
+  for (const f of findings) { f.new = !Object.hasOwn(known, f.fingerprint); now.add(f.fingerprint); }
+  const fixed = Object.entries(known).filter(([fp]) => !now.has(fp)).map(([fp, f]) => ({ fingerprint: fp, type: String(f?.type ?? ''), severity: String(f?.severity ?? ''), title: String(f?.title ?? '').slice(0, 200) }));
+  return { new: findings.filter(f => f.new).length, known: findings.filter(f => !f.new).length, fixed };
 }
 
 /** Common words per language for the mixed-language heuristic (en/pt/es, the languages Bugframe ships). */

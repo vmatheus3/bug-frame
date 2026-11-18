@@ -4,9 +4,9 @@ import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { createFrontier, globToRegExp, isDateSegment, isIdSegment, normalizeUrl, routeTemplate } from '../../src/cli/crawl/urls.mjs';
-import { analyze, classifyClick, languageMix } from '../../src/cli/crawl/detect.mjs';
+import { analyze, applyBaseline, baselineOf, classifyClick, fingerprint, languageMix } from '../../src/cli/crawl/detect.mjs';
 import { crawlHtml, crawlMarkdown } from '../../src/cli/crawl/report.mjs';
-import { assertLocalTarget, checkTargets, crawlLogin, crawlSite, failsOn } from '../../src/cli/crawl/index.mjs';
+import { assertLocalTarget, checkTargets, crawlLogin, crawlSite, failsOn, fileInInbox } from '../../src/cli/crawl/index.mjs';
 import { isDestructive } from '../../src/cli/audit/probe.mjs';
 import { fallbackSummary, summarize, trimForSummary, validateSummary } from '../../src/cli/crawl/summary.mjs';
 import { cleanup, tmpDir } from '../helpers.mjs';
@@ -213,6 +213,24 @@ test('crawl.html escapes every page-supplied string, is self-contained and locks
   for (const h of ['## Summary', '## Top issues', '## Findings', '## Dead controls', '## Broken links and routes', '## Inconsistencies', '## Wiring map', '## Pages', '## Not crawled and limits']) assert.ok(md.includes(h), h);
 });
 
+test('CRAWL.md lists a control that is the same on many pages once, so the wiring map does not grow with the navigation', () => {
+  const c = sampleCrawl(), paths = Array.from({ length: 40 }, (_, i) => `/p${i + 1}`);
+  c.pages = paths.map(p => ({ ...page(p), links: 3 }));
+  c.edges = paths.flatMap(p => [
+    { from: p, page: p, kind: 'link', label: 'Home', outcome: 'navigates', to: '/', status: 200 },
+    { from: p, page: p, kind: 'link', label: 'Pricing', outcome: 'navigates', to: '/pricing', status: 404 },
+    { from: p, page: p, kind: 'button', label: 'Open menu', selector: '#menu', outcome: 'opens', reason: 'dialog, menu or panel', ...(p === '/p1' ? {} : { reused: true }) },
+    { from: p, page: p, kind: 'button', label: `Save ${p}`, selector: '#save', outcome: 'calls-backend', calls: ['POST /api/save'] }]);
+  const md = crawlMarkdown(c), map = md.slice(md.indexOf('## Wiring map'), md.indexOf('## Pages'));
+  assert.equal((map.match(/\| Home \| link \| navigates \| \/ \|/g) ?? []).length, 1, 'a link on every page is one row');
+  assert.match(map, /\| 40 pages \(e\.g\. \/p1, \/p2, \/p3\) \| Home \| link \| navigates \| \/ \|/);
+  assert.match(map, /\| 40 pages .* \| Pricing \| link \| navigates \(404\) \| \/pricing \|/, 'a broken shared link keeps its status');
+  assert.match(map, /\| 40 pages .* \| Open menu \| button \| opens \| dialog, menu or panel \|/);
+  assert.equal((map.match(/calls-backend/g) ?? []).length, 41, 'page-specific controls keep one row each (plus the legend)');
+  assert.match(map, /\| \/p7 \| Save \/p7 \| button \| calls-backend \| POST \/api\/save \|/);
+  assert.ok(map.length < 6000, `the map stays small: ${map.length} characters for 160 edges`);
+});
+
 test('only local sites are crawled unless --allow-remote, checked before any browser starts', async () => {
   const warnings = [], playwright = { chromium: { launch: () => { throw new Error('must not start'); } } };
   await assert.rejects(crawlSite({ startUrl: 'https://prod.example/', out: 'unused', playwright }), /not a local address.*--allow-remote/s);
@@ -223,6 +241,61 @@ test('only local sites are crawled unless --allow-remote, checked before any bro
   await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', maxPages: 0, playwright }), /--max-pages must be a whole number from 1/);
   await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', settleMs: 5, playwright }), /--settle-ms must be a whole number from 100 to 10000/);
   await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', storageState: '/nonexistent/auth.json', playwright }), /not a readable Playwright storage-state/);
+});
+
+test('a baseline makes the crawl a ratchet: known findings stay quiet, new ones are marked and fail the run, fixed ones are counted', () => {
+  const dead = (label, path = '/') => ({ kind: 'button', label, selector: `#${label.toLowerCase()}`, outcome: 'dead' });
+  const before = analyze({ pages: [page('/', { controls: [dead('Export')], consoleErrors: ['Theme missing: palette 12'] }), page('/a', { consoleErrors: ['Theme missing: palette 7'] }), page('/gone', { controls: [dead('Old')] })] });
+  // A later run: one more page shows the same error, a new dead button appeared, an old one was fixed.
+  const after = analyze({ pages: [page('/', { controls: [dead('Export'), dead('Share')], consoleErrors: ['Theme missing: palette 3'] }), page('/a', { consoleErrors: ['Theme missing: palette 9'] }), page('/b', { consoleErrors: ['Theme missing: palette 1'] })] });
+  assert.ok(before.every(f => /^[0-9a-f]{12}$/.test(f.fingerprint)));
+  assert.equal(new Set(before.map(f => f.fingerprint)).size, before.length, 'fingerprints are unique per finding');
+  const find = (list, re) => list.find(f => re.test(f.title));
+  assert.equal(find(before, /Export/).fingerprint, find(after, /Export/).fingerprint, 'the same finding keeps its fingerprint between runs');
+  assert.equal(find(before, /Theme missing/).fingerprint, find(after, /Theme missing/).fingerprint, 'a repeated error is the same finding when it spreads to another page or its numbers change');
+  assert.notEqual(fingerprint({ type: 'dead-control', selector: '#export', title: '"Export" does nothing when clicked', routes: ['/'] }), fingerprint({ type: 'dead-control', selector: '#export', title: '"Export" does nothing when clicked', routes: ['/other'] }), 'the same control on another route is another finding');
+  const base = baselineOf(before), diff = applyBaseline(after, base);
+  assert.deepEqual(after.filter(f => f.new).map(f => f.title), ['"Share" does nothing when clicked']);
+  assert.equal(diff.new, 1); assert.equal(diff.known, after.length - 1);
+  assert.deepEqual(diff.fixed.map(f => f.title), ['"Old" does nothing when clicked']);
+  // --fail-on with a baseline looks at new findings only; without one, at all of them.
+  assert.equal(failsOn(after, 'high', { onlyNew: true }), true);
+  assert.equal(failsOn(after.filter(f => !f.new), 'high', { onlyNew: true }), false, 'known findings never fail a baselined run');
+  assert.equal(failsOn(after.filter(f => !f.new), 'high'), true);
+  // The saved baseline is small and holds no page content beyond finding titles; a full crawl.json works as one too.
+  assert.deepEqual(Object.keys(base).sort(), ['createdAt', 'fingerprints', 'tool']);
+  assert.deepEqual(applyBaseline(analyze({ pages: [page('/', { controls: [dead('Export')] })] }), { findings: before }).new, 0);
+  assert.throws(() => applyBaseline(after, { nonsense: true }), /not a crawl baseline/);
+  // Both reports say what is new.
+  const c = { ...sampleCrawl(), findings: after, baseline: diff };
+  const md = crawlMarkdown(c), html = crawlHtml(c);
+  assert.match(md, /Since the baseline: \*\*1 new\*\*, \d+ already known, 1 fixed/); assert.match(md, /Fixed since the baseline: "Old" does nothing when clicked/);
+  assert.match(md, /1\. \*\*C\d+\*\* \[high\] NEW "Share" does nothing when clicked/, 'new findings lead the top issues');
+  assert.match(md, /- Type: dead-control · NEW since the baseline · fingerprint [0-9a-f]{12}/);
+  assert.equal((html.match(/data-new="new"/g) ?? []).length, 1); assert.match(html, /id="f-new"/); assert.match(html, /new since the baseline/);
+  assert.doesNotMatch(crawlHtml(sampleCrawl()), /id="f-new"/, 'no baseline, no baseline filter');
+});
+
+test('crawl --dir files the crawl in the private inbox as a finished page analysis with a short report', async () => {
+  const { createFileStorage } = await import('../../src/server/index.mjs');
+  const { auditQueue } = await import('../../src/cli/audit/index.mjs');
+  const { parseMarkdown } = await import('../../src/server/inbox/markdown.js');
+  const dir = await tmpDir();
+  try {
+    const crawl = sampleCrawl();
+    const id = await fileInInbox({ dir, crawl, png: null, now: new Date('2026-11-18T10:00:00Z') });
+    assert.match(id, /^bug-20261118-100000-[a-f0-9]{4}$/);
+    const storage = createFileStorage({ dir }), r = await storage.get(id);
+    assert.equal(r.kind, 'audit'); assert.equal(r.status, 'ready_for_review'); assert.equal(r.files.audit, 'audit.md'); assert.equal(r.reviewVersion, 1);
+    assert.match(r.description, /^Site crawl: http:\/\/127\.0\.0\.1:4000 \(1 page\)$/);
+    assert.match(r.note, /^Site crawl: 1 high\. Top: C1 .*Full report: audit\.md\.$/);
+    assert.deepEqual(r.audit.counts, { blocker: 0, high: 1, medium: 0, low: 0 });
+    assert.deepEqual(auditQueue(await storage.list()), [], 'it is a result, not a request: the audit watcher leaves it alone');
+    const md = (await storage.readFile(id, 'audit.md')).toString();
+    assert.match(md, /^# Site crawl: http:\/\/127\.0\.0\.1:4000/); assert.match(md, /## Findings/); assert.doesNotMatch(md, /## Wiring map|## Pages/, 'the inbox copy is the short report');
+    assert.ok(!md.includes(XSS)); assert.ok(parseMarkdown(md).length > 5);
+    assert.ok((await storage.readFile(id, 'full.png')).length > 30, 'a placeholder picture when the start page gave none');
+  } finally { await cleanup(dir); }
 });
 
 test('--fail-on: exit 1 only for findings at or above the level', () => {

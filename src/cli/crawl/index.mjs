@@ -5,9 +5,11 @@ import { createInterface } from 'node:readline';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CliError } from '../commands.mjs';
+import { createFileStorage } from '../../server/storage-fs.mjs';
+import { MAX_ATTACHMENT_BYTES, newReportId } from '../../server/util.mjs';
 import { isLocalUrl, stamp } from '../audit/index.mjs';
 import { CONTEXT, DEFAULT_SETTLE_MS, checkLink, clickOne, guard, isDestructive, load, loadPlaywright, pageChecks, parseViewports, redactUrl, watch } from '../audit/probe.mjs';
-import { SEVERITIES, analyze, classifyClick, languageMix } from './detect.mjs';
+import { SEVERITIES, analyze, applyBaseline, baselineOf, classifyClick, languageMix } from './detect.mjs';
 import { crawlHtml, crawlMarkdown } from './report.mjs';
 import { createFrontier, isHashRoute, normalizeUrl, routeTemplate, shortUrl } from './urls.mjs';
 
@@ -96,6 +98,7 @@ export async function crawlSite(o) {
   const viewports = Array.isArray(opt.viewports) ? opt.viewports : parseViewports(opt.viewports);
   const desktop = [...viewports].sort((a, b) => b.width - a.width)[0];
   const storageState = await readStorageState(opt.storageState);
+  let baseline; if (opt.baseline) { try { baseline = JSON.parse(await readFile(resolve(opt.baseline), 'utf8')); } catch { throw new CliError(`--baseline ${opt.baseline} is not a readable JSON file (write one with --save-baseline FILE).`); } applyBaseline([], baseline); }
   const start = normalizeUrl(opt.startUrl), origin = new URL(start).origin, out = resolve(opt.out);
   await mkdir(join(out, 'screens'), { recursive: true });
   const pw = opt.playwright ?? await loadPlaywright(opt.project);
@@ -164,9 +167,11 @@ export async function crawlSite(o) {
     } finally { await thumbCtx.close(); }
 
     crawl.findings = analyze({ pages, linkStatus, sitemap: crawl.sitemap, settleMs: opt.settleMs });
+    if (baseline) crawl.baseline = applyBaseline(crawl.findings, baseline);
     crawl.finishedAt = new Date().toISOString();
     const pub = toPublic(crawl, pages, frontier, blockedAll, linkStatus);
     await writeFile(join(out, 'crawl.json'), JSON.stringify(pub, null, 2));
+    if (opt.saveBaseline) await writeFile(resolve(opt.saveBaseline), `${JSON.stringify(baselineOf(pub.findings), null, 2)}\n`);
     await writeFile(join(out, 'CRAWL.md'), crawlMarkdown(pub));
     await writeFile(join(out, 'crawl.html'), crawlHtml(pub, thumbs));
     return { ...pub, out };
@@ -226,6 +231,8 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
       if (res) for (const f of res.findings) rec.probe.push({ ...f, viewport: vp.name });
       if (vp === desktop) {
         rec.screenshot = rec.screenshots[vp.name] ?? null;
+        // The start page as a PNG, for filing the crawl in the inbox (--dir).
+        if (n === 1 && opt.startShot) await page.screenshot({ path: join(out, 'screens', 'start.png'), type: 'png', timeout: 20_000 }).catch(() => {});
         const c = await page.evaluate(collectPage);
         Object.assign(rec, { title: c.title, h1: c.h1, lang: c.lang, languages: languageMix(c.text) });
         rec.regions = c.regions.map(r => ({ key: r.key, items: r.items.map(i => ({ label: i.label, url: normalizeUrl(i.url) })).filter(i => i.url && new URL(i.url).origin === origin) }));
@@ -300,12 +307,36 @@ function toPublic(crawl, pages, frontier, blocked, linkStatus) {
   return pub;
 }
 
+/** A 1x1 PNG for a crawl whose start page gave no picture. */
+const BLANK_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+/**
+ * `bugframe --dir REPORTS crawl …`: file the crawl in the private inbox as a finished page analysis (kind `audit`,
+ * ready for review), with the short report as audit.md and the counts in the note. Returns the new report id.
+ */
+export async function fileInInbox({ dir, crawl, png, now = new Date() }) {
+  const storage = createFileStorage({ dir }), f = crawl.stats.findings, at = now.toISOString();
+  const tally = SEVERITIES.filter(s => f[s]).map(s => `${f[s]} ${s}`).join(', ') || 'no findings';
+  const note = `Site crawl: ${tally}.${crawl.findings.length ? ` Top: ${crawl.findings.slice(0, 3).map(x => `${x.id} ${x.title}`).join('; ')}.` : ''} Full report: audit.md.`.slice(0, 2000);
+  let markdown = crawlMarkdown(crawl, { brief: true });
+  if (Buffer.byteLength(markdown) > MAX_ATTACHMENT_BYTES) markdown = `${Buffer.from(markdown).subarray(0, MAX_ATTACHMENT_BYTES - 200).toString('utf8')}\n\n(Shortened: the full report is CRAWL.md.)\n`;
+  for (let attempt = 0; ; attempt++) {
+    const id = newReportId(now);
+    const report = { id, status: 'ready_for_review', note, createdAt: at, reporter: 'admin:cli', description: `Site crawl: ${crawl.origin} (${crawl.stats.pages} page${crawl.stats.pages === 1 ? '' : 's'})`, kind: 'audit', currentText: '', suggestedText: '', reviewVersion: 1, reviewNote: '',
+      activity: [{ status: 'ready_for_review', note, at, by: 'developer' }], types: ['Site crawl'], context: { url: `${crawl.origin}${crawl.start}`, title: 'Site crawl', viewport: null, scroll: null, region: null, userAgent: 'bugframe crawl', language: '', capturedAt: at, elements: [], consoleErrors: [], metadata: {} },
+      files: { region: 'region.png', full: 'full.png', audit: 'audit.md' }, audit: { attempts: 1, startedAt: crawl.startedAt, finishedAt: at, degraded: false, counts: { blocker: 0, high: f.high, medium: f.medium, low: f.low } } };
+    try { await storage.create(report, { region: png ?? BLANK_PNG, full: png ?? BLANK_PNG }); await storage.writeAttachment(id, 'audit.md', Buffer.from(markdown)); return id; }
+    catch (e) { if (e?.code !== 'EXISTS' || attempt >= 4) throw e; }
+  }
+}
+
 /** Highest severity rank that fails the run: --fail-on high fails on high findings; medium on medium or high; … */
-export function failsOn(findings, level) {
+export function failsOn(findings, level, { onlyNew = false } = {}) {
   if (!level || level === 'none') return false;
   const at = SEVERITIES.indexOf(level);
   if (at < 0) throw new CliError('--fail-on must be high, medium, low or none.');
-  return findings.some(f => SEVERITIES.indexOf(f.severity) <= at);
+  // With a baseline only findings that are new since it can fail the run: the crawl is a ratchet, not a wall.
+  return findings.some(f => SEVERITIES.indexOf(f.severity) <= at && (!onlyNew || f.new));
 }
 
 /**
@@ -357,16 +388,21 @@ export async function crawlCommand(args, v, { summarize: summarizeFn } = {}) {
   try {
     const res = await crawlSite({ startUrl: first, out: v.out ?? `bugframe-crawl-${stamp()}`, maxPages: int('max-pages', DEFAULTS.maxPages), maxDepth: int('max-depth', DEFAULTS.maxDepth), include: v.include ?? [], exclude: v.exclude ?? [],
       viewports: v.viewports ?? DEFAULTS.viewports, storageState: v['storage-state'], click: !v['no-click'], maxControls: int('max-controls-per-page', DEFAULTS.maxControls), concurrency: int('concurrency', DEFAULTS.concurrency),
-      timeoutMs: int('timeout', DEFAULTS.timeoutMs), maxMinutes: int('max-minutes', DEFAULTS.maxMinutes), settleMs: int('settle-ms', DEFAULTS.settleMs), allowRemote: v['allow-remote'], project: v.project, signal: controller.signal, log: m => console.error(`[crawl] ${m}`) });
+      timeoutMs: int('timeout', DEFAULTS.timeoutMs), maxMinutes: int('max-minutes', DEFAULTS.maxMinutes), settleMs: int('settle-ms', DEFAULTS.settleMs), allowRemote: v['allow-remote'], project: v.project, baseline: v.baseline, saveBaseline: v['save-baseline'], startShot: Boolean(v.dir), signal: controller.signal, log: m => console.error(`[crawl] ${m}`) });
     const f = res.stats.findings, lines = [
       `Crawled ${res.stats.pages} page(s) (${res.stats.routes} route(s)), tested ${res.stats.controlsTested} control(s), skipped ${res.stats.controlsSkippedDestructive} destructive one(s)${res.partial ? ' (partial run)' : ''}.`,
-      `Findings: ${f.high} high, ${f.medium} medium, ${f.low} low.`,
+      `Findings: ${f.high} high, ${f.medium} medium, ${f.low} low.${res.baseline ? ` Since the baseline: ${res.baseline.new} new, ${res.baseline.known} known, ${res.baseline.fixed.length} fixed.` : ''}`,
+      ...(v['save-baseline'] ? [`Saved the baseline to ${v['save-baseline']}: commit it, then run with --baseline ${v['save-baseline']} --fail-on high so only new findings fail.`] : []),
       `Wrote ${join(res.out, 'crawl.html')} (open it in a browser), ${join(res.out, 'CRAWL.md')} (hand it to your coding agent) and crawl.json.`];
     if (v.summarize) {
       const s = await (summarizeFn ?? (await import('./summary.mjs')).summarize)({ crawl: res, out: res.out, model: v.model ?? 'haiku', budget: v.budget, log: m => console.error(`[crawl] ${m}`) });
       lines.push(s.degraded ? `SUMMARY.md: the model's answer was not usable (${s.errors.slice(0, 2).join('; ')}); wrote the script-only grouping instead and kept the raw answer in summary-output.txt.` : `Wrote ${join(res.out, 'SUMMARY.md')} (${s.model}, ~${s.estTokens} input tokens, ${s.seconds} s).`);
     }
-    if (failsOn(res.findings, failOn)) { process.exitCode = 1; lines.push(`Exit code 1: findings at or above --fail-on ${failOn}.`); }
+    if (v.dir) {
+      const png = await readFile(join(res.out, 'screens', 'start.png')).catch(() => null);
+      lines.push(`Filed in the inbox at ${v.dir} as ${await fileInInbox({ dir: v.dir, crawl: res, png })} (a finished page analysis with the short report).`);
+    }
+    if (failsOn(res.findings, failOn, { onlyNew: Boolean(res.baseline) })) { process.exitCode = 1; lines.push(`Exit code 1: ${res.baseline ? 'new ' : ''}findings at or above --fail-on ${failOn}.`); }
     return lines.join('\n');
   } catch (e) {
     // Exit code 1 means "findings at --fail-on"; anything that stops the run itself is a run error (exit 2).
