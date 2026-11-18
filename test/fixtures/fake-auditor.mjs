@@ -4,6 +4,14 @@ let input = ''; for await (const chunk of process.stdin) input += chunk;
 const mode = process.argv[2] ?? 'good';
 if (mode === 'bad') { console.log('Sure! The page looks great overall.'); process.exit(0); }
 if (mode === 'crash') { console.error('agent exploded'); process.exit(3); }
+if (mode === 'hang') {
+  // Never finishes, and starts a grandchild, so tests can prove the whole process group is killed.
+  const { spawn } = await import('node:child_process'), { writeFileSync } = await import('node:fs');
+  const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  writeFileSync(process.env.HANG_PID_FILE, JSON.stringify([process.pid, grandchild.pid]));
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 const leaked = readdirSync('.').some(n => /^(agents|claude|gemini)\.md$/i.test(n)) || existsSync('.claude');
 const sawTask = input.includes('Audit the page') && existsSync('_bugframe_audit/AUDIT_TASK.md') && existsSync('_bugframe_audit/probe.json');
 console.log(`\`\`\`markdown

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, cpSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -12,16 +12,17 @@ import { validateAuditMarkdown } from '../../src/cli/audit/report.mjs';
 // so the test can prove that no non-GET request, no destructive action and no logout ever reached it.
 const FIXTURE = fileURLToPath(new URL('./fixtures/audit-page', import.meta.url));
 const run = promisify(execFile);
-let server: Server, base = '', seen: { method: string; path: string }[] = [], work = '';
+let server: Server, base = '', seen: { method: string; path: string; url: string }[] = [], sockets: string[] = [], work = '';
 
 test.beforeAll(async () => {
   server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://x').pathname;
-    seen.push({ method: req.method ?? '', path });
+    seen.push({ method: req.method ?? '', path, url: req.url ?? '' });
     const page = path === '/' ? 'index.html' : path === '/about' ? 'about.html' : null;
     if (page) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(readFileSync(join(FIXTURE, page))); return; }
     res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found');
   });
+  server.on('upgrade', (req, socket) => { sockets.push(req.url ?? ''); socket.destroy(); });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
   const address = server.address(); base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
   work = mkdtempSync(join(tmpdir(), 'bugframe-e2e-audit-'));
@@ -41,6 +42,10 @@ test('blind page audit: planted defects are measured, nothing destructive or non
   expect(seen.filter(r => r.method !== 'GET' && r.method !== 'HEAD')).toEqual([]);
   expect(seen.some(r => r.path.startsWith('/api/account'))).toBe(false);
   expect(seen.some(r => r.path === '/logout')).toBe(false);
+  // Links whose URL says delete (in the query or as a camelCase word) are neither fetched nor clicked.
+  expect(seen.filter(r => r.path.startsWith('/items/')).map(r => r.url)).toEqual([]);
+  // WebSockets never reach the server, on load or on click; beacons are not sent.
+  expect(sockets).toEqual([]);
 
   const md = readFileSync(join(out, 'audit.md'), 'utf8');
   expect(validateAuditMarkdown(md).errors).toEqual([]);
@@ -74,9 +79,31 @@ test('blind page audit: planted defects are measured, nothing destructive or non
   expect(click('#notify').effects.blockedRequests).toContain('would have sent POST /api/notify');
   expect(click('#save').effects.formSubmitIntercepted).toBe(true);
   expect(probe.blockedRequests).toContainEqual({ method: 'POST', url: '/api/track' });
+  expect(probe.blockedRequests).toContainEqual({ method: 'WEBSOCKET', url: '/live-load' });
+  expect(probe.blockedRequests).toContainEqual({ method: 'BEACON', url: '/api/beacon' });
+  expect(click('#live').effects.blockedRequests).toContain('would have sent WEBSOCKET /live-click');
+  expect(probe.links.some((l: { url: string }) => l.url.startsWith('/items/'))).toBe(false);
 
   for (const v of probe.viewports) expect(existsSync(join(out, v.screenshot))).toBe(true);
   expect(existsSync(join(out, click('#export').screenshot))).toBe(true);
   expect(existsSync(join(out, '_bugframe_audit', 'AUDIT_TASK.md'))).toBe(true);
   expect(readFileSync(join(out, '_bugframe_audit', 'AUDIT_TASK.md'), 'utf8')).not.toContain(project);
+});
+
+test('Ctrl+C during an audit kills the auditor and its children and never leaves the blind copy behind', async () => {
+  test.setTimeout(120_000);
+  const project = join(work, 'project-sigint'), tmp = join(work, 'tmp-sigint'), pidFile = join(work, 'hang-pids.json');
+  mkdirSync(project); mkdirSync(tmp); writeFileSync(join(project, 'index.html'), '<h1>hi</h1>');
+  const fake = fileURLToPath(new URL('../fixtures/fake-auditor.mjs', import.meta.url));
+  const child = spawn(process.execPath, ['src/cli/bin.mjs', 'audit', `${base}/about`, '--project', project, '--agent-cmd', `"${process.execPath}" "${fake}" hang`, '--out', join(work, 'out-sigint'), '--viewports', '390x844', '--no-click'],
+    { env: { ...process.env, TMPDIR: tmp, HANG_PID_FILE: pidFile }, stdio: 'ignore' });
+  const exited = new Promise<number | null>(r => child.on('exit', code => r(code)));
+  await expect.poll(() => existsSync(pidFile), { timeout: 90_000 }).toBe(true);
+  expect(readdirSync(tmp).filter(n => n.startsWith('bugframe-audit-'))).toHaveLength(1);
+  child.kill('SIGINT');
+  expect(await exited).not.toBe(0);
+  expect(readdirSync(tmp).filter(n => n.startsWith('bugframe-audit-'))).toEqual([]);
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const pids: number[] = JSON.parse(readFileSync(pidFile, 'utf8'));
+  await expect.poll(() => pids.filter(alive), { timeout: 8000 }).toEqual([]);
 });

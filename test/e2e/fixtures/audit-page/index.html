@@ -31,6 +31,7 @@
     <svg class="low" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/></svg>
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/></svg>
   </div>
+  <p>Recent items: <a href="/items/7?op=delete">Item seven</a>, <a href="/items/8/deleteItem">Item eight</a>.</p>
   <p>Need help? <a class="tiny" href="/about" aria-label="Info"><svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16"/></svg></a></p>
   <div class="row">
     <button id="export" type="button">Export</button>
@@ -38,6 +39,7 @@
     <button id="notify" type="button">Notify me</button>
     <button id="recalc" type="button">Recalculate</button>
     <button id="delete-account" type="button">Delete account</button>
+    <button id="live" type="button">Connect live</button>
     <button id="icon-only" type="button"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect width="16" height="16"/></svg></button>
   </div>
   <form method="post" action="/api/save"><input name="display-name" aria-label="Display name" value="Ada"><button id="save">Save</button></form>
@@ -49,6 +51,10 @@
     document.getElementById('delete-account').addEventListener('click', () => { fetch('/api/account', { method: 'DELETE' }); fetch('/api/account/delete'); });
     fetch('/api/missing-data').then(r => { if (!r.ok) console.error('Could not load account data: ' + r.status); });
     fetch('/api/track', { method: 'POST', body: '{}' }).catch(() => {});
+    navigator.sendBeacon('/api/beacon', 'x');
+    const socket = path => { try { new WebSocket('ws://' + location.host + path); } catch (e) { /* blocked */ } };
+    socket('/live-load');
+    document.getElementById('live').addEventListener('click', () => socket('/live-click'));
   </script>
 </body>
 </html>

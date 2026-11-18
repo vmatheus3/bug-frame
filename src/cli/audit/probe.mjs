@@ -1,5 +1,6 @@
 // The probe: deterministic evidence from a real browser (Playwright, loaded only when an audit runs). It measures,
-// it never mutates: every non-GET request is aborted, forms never reach the network, destructive controls are skipped.
+// it never mutates: every non-GET request, WebSocket and beacon is blocked, forms never reach the network, destructive
+// controls and links are skipped.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -8,8 +9,15 @@ import { CliError } from '../commands.mjs';
 
 export const DEFAULT_VIEWPORTS = '390x844,768x1024,1280x800,1440x900';
 const MAX_CLICKS = 40, MAX_LINKS = 30, NAV_TIMEOUT = 30_000;
-/** Labels and links never clicked or fetched (en/pt/es). Matching is on the visible name, aria-label, title and href. */
+/** Labels and links never clicked or fetched (en/pt/es). Matched by isDestructive against the visible name, aria-label,
+ *  title and the whole href (path and query). */
 export const DESTRUCTIVE = /\b(delete|remove|destroy|erase|wipe|purge|pay|payment|purchase|buy|checkout|place order|order now|subscribe|unsubscribe|log ?out|sign ?out|deactivate|close account|cancel (subscription|account|plan|order)|transfer|withdraw|refund|send money|reset|revoke|excluir|apagar|remover|deletar|pagar|comprar|finalizar compra|assinar|sair|desconectar|desativar|cancelar (assinatura|conta|plano|pedido)|transferir|sacar|reembolsar|eliminar|borrar|quitar|suscribirse|cerrar sesi[oó]n|darse de baja|cancelar suscripci[oó]n|retirar)\b/i;
+/** True when a label or URL holds a destructive word, including inside URL paths and queries and camelCase, kebab-case
+ *  or snake_case names: "/items/8/deleteItem" and "/items/7?op=delete" both count. */
+export function isDestructive(text) {
+  let s = String(text ?? ''); try { s = decodeURIComponent(s); } catch { /* keep it encoded */ }
+  return DESTRUCTIVE.test(s.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2').replace(/[^\p{L}\p{N}]+/gu, ' '));
+}
 const SECRET_PARAM = /token|key|secret|pass|auth|code|session|sig|jwt|otp|nonce|credential/i;
 
 /** "390x844,1280x800" → [{ width, height, name }]. */
@@ -47,7 +55,7 @@ export async function loadPlaywright(project) {
 }
 
 // ---- runs inside the page (serialized by Playwright: no closures over module scope)
-function pageChecks({ phone, structural, destructive, max }) {
+function pageChecks({ phone, structural, max }) {
   const out = [], vw = document.documentElement.clientWidth, vh = window.innerHeight;
   const add = (type, severity, el, title, evidence, measured = {}) => { if (out.filter(f => f.type === type).length < max) out.push({ type, severity, selector: el ? sel(el) : '', title, evidence, measured }); };
   const isUi = el => Boolean(el.closest?.('[data-bug-ui]'));
@@ -181,36 +189,65 @@ function pageChecks({ phone, structural, destructive, max }) {
     const centers = icons.map(i => i.r.top + i.r.height / 2), sorted = [...centers].sort((x, y) => x - y), ref = icons.length === 2 ? centers[0] : sorted[Math.floor(sorted.length / 2)];
     icons.forEach((i, k) => { const d = centers[k] - ref; if (Math.abs(d) > 2) add('misaligned', 'low', i.n, 'Icon is not vertically aligned with its row', `vertical centre ${centers[k].toFixed(1)}px vs row ${ref.toFixed(1)}px (off by ${d.toFixed(1)}px) in ${sel(parent)}`, { offsetPx: Number(d.toFixed(1)) }); });
   }
-  // Same-origin links for the link check, and click candidates.
-  const destr = new RegExp(destructive, 'i'), seen = new Set();
+  // Same-origin links for the link check, and click candidates (destructive ones are filtered in Node by isDestructive).
+  const seen = new Set();
   for (const a of document.querySelectorAll('a[href]')) {
     if (isUi(a)) continue; let u; try { u = new URL(a.href); } catch { continue; }
-    if (u.origin !== location.origin || !/^https?:$/.test(u.protocol) || destr.test(accName(a) + ' ' + u.pathname)) continue;
+    if (u.origin !== location.origin || !/^https?:$/.test(u.protocol)) continue;
     u.hash = ''; if (u.href === location.href.split('#')[0] || seen.has(u.href)) continue; seen.add(u.href);
-    result.links.push({ href: u.href, selector: sel(a) });
+    result.links.push({ href: u.href, selector: sel(a), text: `${accName(a)} ${u.pathname}${u.search}` });
   }
   for (const el of controls) {
     if (!el.matches('button, a[href], [role=button], [role=link], input[type=submit], input[type=button], input[type=reset], summary') || disabled(el)) continue;
     const label = accName(el).slice(0, 80), href = el.getAttribute('href') ?? '';
     let external = false; if (el.matches('a[href]')) { try { const u = new URL(el.href); external = u.origin !== location.origin || !/^https?:$/.test(u.protocol) && u.protocol !== 'javascript:'; } catch { external = true; } }
-    result.candidates.push({ selector: sel(el), label, tag: el.tagName.toLowerCase(), destructive: destr.test(`${label} ${href} ${el.getAttribute('title') ?? ''}`), external });
+    result.candidates.push({ selector: sel(el), label, tag: el.tagName.toLowerCase(), text: `${label} ${href} ${el.getAttribute('title') ?? ''} ${el.getAttribute('aria-label') ?? ''}`, external });
   }
   return result;
 }
 
-/** Abort every non-GET request (and, when asked, top-level navigations to other sites) and record it. */
-async function guard(context, origin, blocked, { foreignNav = false } = {}) {
+/** Every browser context the probe opens: no downloads, no service workers. */
+const CONTEXT = { deviceScaleFactor: 1, serviceWorkers: 'block', acceptDownloads: false };
+
+/**
+ * Block and record everything that could change something: non-GET requests, WebSockets, beacons, navigations to other
+ * sites or to destructive-looking URLs (the audited page itself excepted); cancel form submissions; close popups.
+ */
+async function guard(context, origin, blocked, target) {
+  if (typeof context.routeWebSocket !== 'function') throw new CliError('Page audit needs Playwright 1.48 or newer (it must block WebSockets). In your project run: npm i -D playwright@latest');
+  await context.exposeBinding('__bfBlock', (_source, method, url) => { blocked.push({ method: String(method), url: pathOf(String(url), origin) }); });
   await context.addInitScript(() => {
     window.__bfSubmits = 0;
     window.addEventListener('submit', e => { window.__bfSubmits++; e.preventDefault(); }, true);
     HTMLFormElement.prototype.submit = function () { window.__bfSubmits++; };
+    // Beacons are POSTs the page cannot observe; never send them.
+    if (navigator.sendBeacon) navigator.sendBeacon = function (url) { try { window.__bfBlock('BEACON', new URL(url, location.href).href); } catch { /* bad url */ } return true; };
   });
+  await context.routeWebSocket(/.*/, ws => { blocked.push({ method: 'WEBSOCKET', url: pathOf(ws.url().replace(/^ws/, 'http'), origin) }); return ws.close(); });
   await context.route('**/*', route => {
-    const req = route.request(), method = req.method();
+    const req = route.request(), method = req.method(), url = new URL(req.url());
     if (method !== 'GET' && method !== 'HEAD') { blocked.push({ method, url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
-    if (foreignNav && req.isNavigationRequest() && new URL(req.url()).origin !== origin) { blocked.push({ method: 'NAVIGATE', url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
+    if (req.isNavigationRequest() && (url.origin !== origin || (req.url() !== target && isDestructive(url.pathname + url.search)))) { blocked.push({ method: 'NAVIGATE', url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
     return route.continue();
   });
+  context.on('page', async p => { if (await p.opener().catch(() => null)) p.close().catch(() => {}); });
+}
+
+/**
+ * GET one same-origin link through the same rules as the browser guard: never a destructive URL, never another site,
+ * redirects followed here hop by hop (at most 5) so each hop is checked. Returns { status } or { status: null, skipped|error }.
+ */
+export async function checkLink(request, href, origin, hops = 5) {
+  let url = new URL(href);
+  for (let i = 0; i <= hops; i++) {
+    if (url.origin !== origin) return { status: null, skipped: 'redirect to another site' };
+    if (isDestructive(url.pathname + url.search)) return { status: null, skipped: 'destructive' };
+    const r = await request.get(url.href, { maxRedirects: 0, timeout: 10_000, failOnStatusCode: false });
+    const status = r.status(), location = r.headers().location; await r.dispose();
+    if (status < 300 || status >= 400 || !location) return { status };
+    url = new URL(location, url);
+  }
+  return { status: null, error: 'too many redirects' };
 }
 
 function watch(page, origin) {
@@ -235,7 +272,7 @@ async function load(page, url) {
  * Measure `url` at every viewport in light and dark mode, check same-origin links, and click-probe the controls.
  * Writes probe.json, screens/ and clicks/ into `outDir` (the blind workspace's _bugframe_audit) and returns the probe.
  */
-export async function probePage({ url, viewports = parseViewports(), click = true, outDir, evidencePrefix = '_bugframe_audit', project, playwright, log = () => {} }) {
+export async function probePage({ url, viewports = parseViewports(), click = true, outDir, evidencePrefix = '_bugframe_audit', project, playwright, signal, log = () => {} }) {
   let target; try { target = new URL(url); } catch { throw new CliError('Give the page URL to audit, e.g. http://localhost:3000/settings'); }
   if (!/^https?:$/.test(target.protocol)) throw new CliError('Only http and https pages can be audited.');
   const pw = playwright ?? await loadPlaywright(project), origin = target.origin;
@@ -244,41 +281,50 @@ export async function probePage({ url, viewports = parseViewports(), click = tru
   try { browser = await pw.chromium.launch({ headless: true }); } catch (e) { throw new CliError(`Could not start Chromium (${String(e?.message ?? e).split('\n')[0]}). Run: npx playwright install chromium`); }
   const probe = { tool: 'bugframe page audit', url: redactUrl(url), startedAt: new Date().toISOString(), viewports: [], findings: [], links: [], clicks: [], blockedRequests: [], notes: [] };
   const raw = [], blocked = [], logs = [], candidatesBy = new Map();
+  const stopped = () => signal?.throwIfAborted();
+  const marked = candidates => candidates.map(({ text: t, ...c }) => ({ ...c, destructive: isDestructive(t) }));
   try {
     for (const vp of viewports) for (const scheme of ['light', 'dark']) {
       const name = `${vp.name}-${scheme}`, phone = vp.width < 600;
-      log(`probe ${name}`);
-      const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, colorScheme: scheme, deviceScaleFactor: 1, isMobile: phone, hasTouch: phone, serviceWorkers: 'block' });
+      stopped(); log(`probe ${name}`);
+      const context = await browser.newContext({ ...CONTEXT, viewport: { width: vp.width, height: vp.height }, colorScheme: scheme, isMobile: phone, hasTouch: phone });
       try {
-        await guard(context, origin, blocked);
+        await guard(context, origin, blocked, target.href.split('#')[0]);
         const page = await context.newPage(), pageLog = watch(page, origin); logs.push({ name: `${vp.name} ${scheme}`, log: pageLog });
         await load(page, url);
         const shot = `screens/${name}.png`;
         await page.screenshot({ path: join(outDir, shot), fullPage: true, timeout: 20_000 }).catch(() => page.screenshot({ path: join(outDir, shot) }));
-        const res = await page.evaluate(pageChecks, { phone, structural: scheme === 'light', destructive: DESTRUCTIVE.source, max: 15 });
+        const res = await page.evaluate(pageChecks, { phone, structural: scheme === 'light', max: 15 });
         probe.viewports.push({ name, width: vp.width, height: vp.height, scheme, screenshot: `${evidencePrefix}/${shot}`, documentWidth: res.documentWidth });
         for (const f of res.findings) raw.push({ ...f, viewport: `${vp.name} ${scheme}`, screenshot: `${evidencePrefix}/${shot}` });
-        if (scheme === 'light' && !probe.links.length && res.links.length) probe.links = res.links.slice(0, MAX_LINKS);
-        if (scheme === 'light') candidatesBy.set(vp.name, res.candidates);
-      } catch (e) { probe.notes.push(`${name}: the page could not be measured (${scrub(String(e?.message ?? e).split('\n')[0])}).`); }
+        if (scheme === 'light' && !probe.links.length && res.links.length) {
+          const safe = res.links.filter(l => !isDestructive(l.text)), skipped = res.links.length - safe.length;
+          probe.links = safe.slice(0, MAX_LINKS).map(({ text: _t, ...l }) => l);
+          if (skipped) probe.notes.push(`${skipped} link(s) were not checked because their text or URL looks destructive.`);
+        }
+        if (scheme === 'light') candidatesBy.set(vp.name, marked(res.candidates));
+      } catch (e) { if (signal?.aborted) throw e; probe.notes.push(`${name}: the page could not be measured (${scrub(String(e?.message ?? e).split('\n')[0])}).`); }
       finally { await context.close(); }
     }
     if (!probe.viewports.length) throw new CliError(`The page did not load at any viewport: ${probe.notes[0] ?? url}`);
 
     // Link check and click probe share one context at the viewport closest to a laptop (1280 wide).
     const vp = [...viewports].sort((a, b) => Math.abs(a.width - 1280) - Math.abs(b.width - 1280))[0];
-    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, serviceWorkers: 'block' });
+    const context = await browser.newContext({ ...CONTEXT, viewport: { width: vp.width, height: vp.height } });
     try {
-      await guard(context, origin, blocked, { foreignNav: true });
+      await guard(context, origin, blocked, target.href.split('#')[0]);
       for (const link of probe.links) {
-        try { const r = await context.request.get(link.href, { maxRedirects: 5, timeout: 10_000, failOnStatusCode: false }); link.status = r.status(); await r.dispose(); } catch (e) { link.status = null; link.error = String(e?.message ?? e).split('\n')[0].slice(0, 80); }
+        stopped();
+        try { Object.assign(link, await checkLink(context.request, link.href, origin)); } catch (e) { link.status = null; link.error = String(e?.message ?? e).split('\n')[0].slice(0, 80); }
         link.url = pathOf(link.href, origin); delete link.href;
+        if (link.skipped) { blocked.push({ method: 'GET', url: link.url }); continue; }
         if (link.status === null || link.status >= 400) raw.push({ type: 'broken-link', severity: 'medium', selector: link.selector, title: `Link to ${link.url} is broken`, evidence: `GET ${link.url} → ${link.status ?? link.error}`, measured: { status: link.status }, viewport: `${vp.name} light` });
       }
       if (click) {
-        const candidates = candidatesBy.get(vp.name) ?? (await (async () => { const p = await context.newPage(); try { await load(p, url); return (await p.evaluate(pageChecks, { phone: false, structural: true, destructive: DESTRUCTIVE.source, max: 15 })).candidates; } finally { await p.close(); } })());
+        const candidates = candidatesBy.get(vp.name) ?? (await (async () => { const p = await context.newPage(); try { await load(p, url); return marked((await p.evaluate(pageChecks, { phone: false, structural: true, max: 15 })).candidates); } finally { await p.close(); } })());
         let n = 0;
         for (const c of candidates) {
+          stopped();
           if (c.destructive) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: destructive' }); continue; }
           if (c.external) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: external link' }); continue; }
           if (n >= MAX_CLICKS) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: click limit' }); continue; }

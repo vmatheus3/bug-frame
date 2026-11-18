@@ -6,16 +6,25 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { CliError } from '../commands.mjs';
 import { createFileStorage } from '../../server/storage-fs.mjs';
 import { MAX_ATTACHMENT_BYTES, text } from '../../server/util.mjs';
-import { EVIDENCE_DIR, createBlindWorkspace } from './blind.mjs';
+import { EVIDENCE_DIR, cleanupAllSync, createBlindWorkspace } from './blind.mjs';
 import { parseViewports, probePage, redactUrl } from './probe.mjs';
 import { probeMarkdown, summaryNote, unfence, validateAuditMarkdown } from './report.mjs';
-import { onPath, runAuditor } from './runner.mjs';
+import { killAllChildren, onPath, runAuditor } from './runner.mjs';
 
 export const PROMPT_PATH = new URL('../../../prompts/AUDIT_PAGE.md', import.meta.url);
 export const MAX_ATTEMPTS = 3;
 const stamp = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 /** Error text for notes and logs: first line, short, no home folder. */
 const short = e => String(e?.message ?? e).split('\n')[0].split(homedir()).join('~').slice(0, 300);
+
+/**
+ * Local development addresses only: localhost and *.localhost, *.test, 127.0.0.0/8, ::1 and 0.0.0.0. Private LAN ranges
+ * (10/8, 192.168/16, …) are deliberately not local: intranet production servers live there too.
+ */
+export function isLocalUrl(href) {
+  let host; try { host = new URL(href).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, ''); } catch { return false; }
+  return host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.test') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
+}
 
 /** 'claude' | 'none' | 'custom' from the flags; claude when it is installed and nothing was chosen. */
 export function chooseAgent({ agent, agentCmd, warn = m => console.error(m) }) {
@@ -47,13 +56,18 @@ function auditJson(res) {
  * One audit. Builds the blind workspace, probes, runs the auditor, validates its report and falls back to the
  * probe-only report when it is unusable (degraded). With `out`, writes audit.md, audit.json and the evidence there.
  */
-export async function auditOnce({ url, project, viewports, agent = 'none', agentCmd, model, click = true, timeoutMs = 900_000, keep = false, out, tmpRoot, probe = probePage, log = () => {}, warn = m => console.error(m) }) {
+export async function auditOnce({ url, project, viewports, agent = 'none', agentCmd, model, click = true, timeoutMs = 900_000, keep = false, out, tmpRoot, exclude = [], allowRemote = false, signal, probe = probePage, log = () => {}, warn = m => console.error(m) }) {
   if (!project) throw new CliError('audit needs --project <the folder of the code behind this page>.');
+  try { new URL(url); } catch { throw new CliError('Give the page URL to audit, e.g. http://localhost:3000/settings'); }
+  if (!isLocalUrl(url)) {
+    if (!allowRemote) throw new CliError(`Refusing to audit ${redactUrl(url)}: it is not a local address. The audit loads the page and clicks its controls, so it only runs against your dev server: pass --base-url http://localhost:3000 to audit the same path there, or --allow-remote to accept the risk.`);
+    warn(`bugframe audit: WARNING --allow-remote: auditing ${redactUrl(url)}, which is NOT a local address. The probe loads the page and clicks its controls with your browser session's rights; it blocks writes but cannot know what a GET does on that server. Never point it at production.`);
+  }
   const vps = Array.isArray(viewports) ? viewports : parseViewports(viewports);
-  const ws = await createBlindWorkspace({ project, tmpRoot });
+  const ws = await createBlindWorkspace({ project, tmpRoot, exclude: [...exclude, out] });
   try {
     log(`blind copy: ${ws.manifest.copiedFiles} files, ${ws.manifest.excludedInstructions.length} instruction files left out`);
-    const p = await probe({ url, viewports: vps, click, outDir: ws.evidenceDir, evidencePrefix: EVIDENCE_DIR, project, log });
+    const p = await probe({ url, viewports: vps, click, outDir: ws.evidenceDir, evidencePrefix: EVIDENCE_DIR, project, signal, log });
     await writeFile(join(ws.evidenceDir, 'manifest.json'), JSON.stringify(ws.manifest, null, 2));
     const task = taskText(p); await writeFile(join(ws.evidenceDir, 'AUDIT_TASK.md'), task);
     const res = { markdown: probeMarkdown(p), degraded: false, validation: null, rawOutput: null, probe: p, manifest: ws.manifest, agent, model, workspace: keep ? ws.dir : null };
@@ -61,10 +75,10 @@ export async function auditOnce({ url, project, viewports, agent = 'none', agent
       const promptFile = join(ws.root, 'AUDIT_PAGE.md'); await copyFile(PROMPT_PATH, promptFile);
       log(`auditor: ${agent}`);
       try {
-        res.rawOutput = await runAuditor({ agent, agentCmd, model, cwd: ws.dir, promptFile, prompt: await readFile(PROMPT_PATH, 'utf8'), task: `Audit the page ${p.url}. ${EVIDENCE_DIR}/AUDIT_TASK.md has the details; the evidence is in ${EVIDENCE_DIR}/. Output only the report.`, timeoutMs, warn });
+        res.rawOutput = await runAuditor({ agent, agentCmd, model, cwd: ws.dir, promptFile, prompt: await readFile(PROMPT_PATH, 'utf8'), task: `Audit the page ${p.url}. ${EVIDENCE_DIR}/AUDIT_TASK.md has the details; the evidence is in ${EVIDENCE_DIR}/. Output only the report.`, timeoutMs, signal, warn });
         const md = unfence(res.rawOutput); res.validation = validateAuditMarkdown(md);
         if (res.validation.ok) res.markdown = md; else res.degraded = true;
-      } catch (e) { res.degraded = true; res.validation = { ok: false, errors: [short(e)] }; }
+      } catch (e) { if (signal?.aborted) throw e; res.degraded = true; res.validation = { ok: false, errors: [short(e)] }; }
     }
     if (out) {
       const dir = resolve(out); await mkdir(dir, { recursive: true });
@@ -75,7 +89,8 @@ export async function auditOnce({ url, project, viewports, agent = 'none', agent
       res.out = dir;
     }
     return res;
-  } finally { if (!keep) await ws.cleanup(); }
+  } catch (e) { if (signal?.aborted) throw new CliError('The audit was stopped; its blind copy was removed.'); throw e; }
+  finally { if (!keep || signal?.aborted) await ws.cleanup(); }
 }
 
 /** The page to audit: the captured URL, with its origin swapped for --base-url (e.g. a local dev server). */
@@ -107,7 +122,13 @@ async function processOne(storage, r, options) {
     log(`${r.id}: ${finalNote}`);
     return true;
   } catch (e) {
-    const giveUp = attempts >= MAX_ATTEMPTS || e instanceof CliError && /no valid page URL|not http/.test(e.message);
+    if (options.signal?.aborted) {
+      const note = 'Page analysis was interrupted before it finished; it will run again.';
+      await storage.update(r.id, { status: 'open', note, audit: { ...(r.audit ?? {}), attempts: attempts - 1 }, activity: [...(current?.activity ?? []), { status: 'open', note, at: now(), by: 'developer' }].slice(-100) });
+      log(`${r.id}: ${note}`);
+      return false;
+    }
+    const giveUp = attempts >= MAX_ATTEMPTS || e instanceof CliError && /no valid page URL|not http|not a local address/.test(e.message);
     const note = `Page analysis failed (attempt ${attempts} of ${MAX_ATTEMPTS}): ${short(e)}${giveUp ? ' Not retrying; run `bugframe audit <url> --project <folder>` to see the details, then reopen this request.' : ' It will be retried.'}`;
     await storage.update(r.id, { status: 'open', note: text(note, 2000), audit: { ...(r.audit ?? {}), attempts: giveUp ? Math.max(attempts, MAX_ATTEMPTS) : attempts, startedAt, lastError: short(e) },
       activity: [...(current?.activity ?? []), { status: 'open', note: text(note, 2000), at: now(), by: 'developer' }].slice(-100) });
@@ -145,20 +166,31 @@ export async function auditCommand(url, v, dir, { checkBlind } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 7_200_000) throw new CliError('--timeout is the auditor time limit in milliseconds (10000–7200000).');
   const agent = chooseAgent({ agent: v.agent, agentCmd: v['agent-cmd'] });
   const log = m => console.error(`[audit] ${m}`);
-  const common = { project: v.project, viewports: parseViewports(v.viewports), agent, agentCmd: v['agent-cmd'], model: v.model, click: !v['no-click'], timeoutMs, keep: v.keep, log };
-  if (v.watch) {
-    if (url) throw new CliError('--watch takes no URL: it reads page-analysis requests from --dir.');
-    if (!v.project) throw new CliError('audit --watch needs --project <the folder of the code behind the pages>.');
-    const controller = new AbortController(), stop = () => controller.abort();
-    process.once('SIGINT', stop); process.once('SIGTERM', stop);
-    try {
+  // First Ctrl+C (or SIGTERM): kill the running auditor's process group, stop the probe, remove the blind copy, then exit.
+  // A second one exits at once after the same cleanup done synchronously.
+  const controller = new AbortController(); let signals = 0;
+  const stop = () => {
+    if (++signals > 1) { killAllChildren(); cleanupAllSync(); process.exit(130); }
+    log('stopping: ending the auditor and removing the blind copy (Ctrl+C again to force)');
+    controller.abort();
+  };
+  const common = { project: v.project, viewports: parseViewports(v.viewports), agent, agentCmd: v['agent-cmd'], model: v.model, click: !v['no-click'], timeoutMs, keep: v.keep, allowRemote: v['allow-remote'],
+    exclude: [dir, v.out], signal: controller.signal, log };
+  if (v.watch && url) throw new CliError('--watch takes no URL: it reads page-analysis requests from --dir.');
+  if (v.watch && !v.project) throw new CliError('audit --watch needs --project <the folder of the code behind the pages>.');
+  if (!v.watch && !url) throw new CliError('Usage: bugframe audit <url> --project <folder> [options], or bugframe audit --watch --dir <reports> --project <folder>.');
+  process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  try {
+    if (v.watch) {
       log(`watching ${resolve(dir)} for page-analysis requests${v.once ? ' (once)' : '; Ctrl+C to stop'}`);
-      const n = await watchAudits({ dir, once: v.once, baseUrl: v['base-url'], out: v.out, signal: controller.signal, ...common });
-      return `Processed ${n} page-analysis request${n === 1 ? '' : 's'}.`;
-    } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
-  }
-  if (!url) throw new CliError('Usage: bugframe audit <url> --project <folder> [options], or bugframe audit --watch --dir <reports> --project <folder>.');
-  if (v['base-url']) throw new CliError('--base-url only applies to --watch; pass the local URL directly.');
+      const n = await watchAudits({ dir, once: v.once, baseUrl: v['base-url'], out: v.out, ...common });
+      return `Processed ${n} page-analysis request${n === 1 ? '' : 's'}${controller.signal.aborted ? ' (stopped)' : ''}.`;
+    }
+    return await auditOne(v['base-url'] ? targetUrl(url, v['base-url']) : url, v, common);
+  } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
+}
+
+async function auditOne(url, v, common) {
   const res = await auditOnce({ url, out: v.out ?? join('bugframe-audit', stamp()), ...common });
   const lines = [`Wrote ${join(res.out, 'audit.md')}`, summaryNote(res.markdown, { degraded: res.degraded }).note];
   if (res.degraded) lines.push(`Degraded: the auditor's answer was not usable (${(res.validation?.errors ?? []).slice(0, 3).join('; ')}). audit.md is the probe-only report${res.rawOutput ? '; the raw answer is in agent-output.txt' : ''}.`);

@@ -34,9 +34,12 @@ Commands:
   import <report.zip>                  unpack a report downloaded from a backend-less page
   audit <url> --project FOLDER [--out DIR] [--viewports 390x844,768x1024,1280x800,1440x900]
         [--agent claude|none | --agent-cmd "CMD"] [--model ID] [--no-click] [--timeout MS] [--keep]
+        [--base-url http://localhost:3000] [--allow-remote]
                                        blind page analysis: browser probe + an auditor that sees the
-                                       code but no agent-instruction files; writes audit.md
-  audit --watch --dir REPORTS --project FOLDER [--base-url http://localhost:3000] [--once]
+                                       code but no agent-instruction files; writes audit.md. Local pages
+                                       only (localhost, *.localhost, *.test, 127.x, ::1) unless --base-url
+                                       rewrites the origin or --allow-remote accepts a remote one
+  audit --watch --dir REPORTS --project FOLDER [--base-url http://localhost:3000] [--once] [--allow-remote]
                                        process "Analyze this page" requests from the widget
   audit --check-blind [--model ID]     prove on this machine that the auditor is blind and confined
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL] [--webhook-secret S]
@@ -58,7 +61,7 @@ async function main(argv) {
       'allow-localhost': { type: 'boolean' }, site: { type: 'string' }, project: { type: 'string' }, interval: { type: 'string' }, 'state-dir': { type: 'string' }, once: { type: 'boolean' }, 'include-existing': { type: 'boolean' },
       dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, budget: { type: 'string' }, playwright: { type: 'boolean' }, note: { type: 'string' }, status: { type: 'string' },
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
-      viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' },
+      viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' }, 'allow-remote': { type: 'boolean' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
   });

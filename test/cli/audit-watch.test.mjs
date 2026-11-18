@@ -67,7 +67,7 @@ test('watch mode: failures leave the report open with a clear note and stop afte
   try {
     const storage = createFileStorage({ dir }), id = 'bug-20260101-000001-aaaa';
     await storage.create(report(id), { region: png, full: png });
-    for (let i = 1; i <= MAX_ATTEMPTS + 1; i++) await watchAudits({ dir, once: true, project: src, agent: 'none', probe: fakeProbe(seen, { fail: true }), ...quiet });
+    for (let i = 1; i <= MAX_ATTEMPTS + 1; i++) await watchAudits({ dir, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'none', probe: fakeProbe(seen, { fail: true }), ...quiet });
     assert.equal(seen.length, MAX_ATTEMPTS, 'never more than the attempt limit');
     const r = await storage.get(id);
     assert.equal(r.status, 'open'); assert.equal(r.audit.attempts, MAX_ATTEMPTS); assert.equal(r.audit.lastError, 'page did not load');
@@ -76,7 +76,7 @@ test('watch mode: failures leave the report open with a clear note and stop afte
     // An unusable report URL fails at once instead of three times.
     const bad = 'bug-20260101-000002-bbbb';
     await storage.create(report(bad, { context: { url: 'ftp://x/y' } }), { region: png, full: png });
-    await watchAudits({ dir, once: true, project: src, agent: 'none', probe: fakeProbe(seen), ...quiet });
+    await watchAudits({ dir, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'none', probe: fakeProbe(seen), ...quiet });
     assert.equal((await storage.get(bad)).audit.attempts, MAX_ATTEMPTS);
   } finally { await cleanup(dir); await cleanup(src); }
 });
@@ -86,7 +86,7 @@ test('an unusable auditor answer is kept raw and the run is marked degraded with
   try {
     const storage = createFileStorage({ dir }), id = 'bug-20260101-000001-aaaa';
     await storage.create(report(id), { region: png, full: png });
-    await watchAudits({ dir, once: true, project: src, agent: 'custom', agentCmd: agentCmd('bad'), probe: fakeProbe(seen), ...quiet });
+    await watchAudits({ dir, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'custom', agentCmd: agentCmd('bad'), probe: fakeProbe(seen), ...quiet });
     const r = await storage.get(id);
     assert.equal(r.status, 'ready_for_review'); assert.equal(r.audit.degraded, true); assert.match(r.note, /probe-only/);
     const md = (await storage.readFile(id, 'audit.md')).toString();
@@ -104,7 +104,7 @@ test('storage without writeAttachment degrades to a note-only result', async () 
   try {
     const legacy = { create: memory.create, get: memory.get, list: memory.list, update: memory.update, readFile: memory.readFile }, id = 'bug-20260101-000001-aaaa';
     await legacy.create(report(id), { region: png, full: png });
-    await watchAudits({ storage: legacy, once: true, project: src, agent: 'none', probe: fakeProbe(seen), ...quiet });
+    await watchAudits({ storage: legacy, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'none', probe: fakeProbe(seen), ...quiet });
     const r = await legacy.get(id);
     assert.equal(r.status, 'ready_for_review'); assert.equal(r.audit.noteOnly, true); assert.equal(r.files.audit, undefined);
     assert.match(r.note, /only this note was saved/); assert.match(r.note, /1 high/);
