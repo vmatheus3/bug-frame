@@ -10,6 +10,7 @@ import { CliError, cmdClose, cmdExport, cmdImport, cmdList, cmdReady, cmdReopen,
 import { setupProject } from './setup.mjs';
 import { connectCodex } from './codex.mjs';
 import { remoteCommand, remoteCredentials } from './remote.mjs';
+import { auditCommand } from './audit/index.mjs';
 
 const HELP = `bugframe - collect visual feedback and hand them to a person or an AI agent
 
@@ -31,6 +32,13 @@ Commands:
   ready <id> --note "what changed and what to review"
   reopen <id>
   import <report.zip>                  unpack a report downloaded from a backend-less page
+  audit <url> --project FOLDER [--out DIR] [--viewports 390x844,768x1024,1280x800,1440x900]
+        [--agent claude|none | --agent-cmd "CMD"] [--model ID] [--no-click] [--timeout MS] [--keep]
+                                       blind page analysis: browser probe + an auditor that sees the
+                                       code but no agent-instruction files; writes audit.md
+  audit --watch --dir REPORTS --project FOLDER [--base-url http://localhost:3000] [--once]
+                                       process "Analyze this page" requests from the widget
+  audit --check-blind [--model ID]     prove on this machine that the auditor is blind and confined
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL] [--webhook-secret S]
                                        authorized sessions via a module exporting authorize(request), or admin-token access only
                                        set BUGFRAME_ADMIN_TOKEN / BUGFRAME_AUTH_MODULE to keep config out of shell history
@@ -50,6 +58,7 @@ async function main(argv) {
       'allow-localhost': { type: 'boolean' }, site: { type: 'string' }, project: { type: 'string' }, interval: { type: 'string' }, 'state-dir': { type: 'string' }, once: { type: 'boolean' }, 'include-existing': { type: 'boolean' },
       dir: { type: 'string' }, remote: { type: 'string' }, credentials: { type: 'string' }, timeout: { type: 'string' }, open: { type: 'boolean' }, all: { type: 'boolean' }, json: { type: 'boolean' }, out: { type: 'string' }, budget: { type: 'string' }, playwright: { type: 'boolean' }, note: { type: 'string' }, status: { type: 'string' },
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
+      viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
   });
@@ -66,6 +75,7 @@ async function main(argv) {
     try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal }); return null; }
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   }
+  if (cmd === 'audit') return auditCommand(arg, values, dir);
   if (values.remote) {
     if (values.dir) throw new CliError('--remote and --dir cannot be combined.');
     if (!['list', 'show', 'close', 'ready', 'reopen'].includes(cmd)) throw new CliError('Remote mode supports list, show, close, ready and reopen only.');

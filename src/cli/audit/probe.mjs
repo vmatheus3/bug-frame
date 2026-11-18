@@ -1,0 +1,349 @@
+// The probe: deterministic evidence from a real browser (Playwright, loaded only when an audit runs). It measures,
+// it never mutates: every non-GET request is aborted, forms never reach the network, destructive controls are skipped.
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { CliError } from '../commands.mjs';
+
+export const DEFAULT_VIEWPORTS = '390x844,768x1024,1280x800,1440x900';
+const MAX_CLICKS = 40, MAX_LINKS = 30, NAV_TIMEOUT = 30_000;
+/** Labels and links never clicked or fetched (en/pt/es). Matching is on the visible name, aria-label, title and href. */
+export const DESTRUCTIVE = /\b(delete|remove|destroy|erase|wipe|purge|pay|payment|purchase|buy|checkout|place order|order now|subscribe|unsubscribe|log ?out|sign ?out|deactivate|close account|cancel (subscription|account|plan|order)|transfer|withdraw|refund|send money|reset|revoke|excluir|apagar|remover|deletar|pagar|comprar|finalizar compra|assinar|sair|desconectar|desativar|cancelar (assinatura|conta|plano|pedido)|transferir|sacar|reembolsar|eliminar|borrar|quitar|suscribirse|cerrar sesi[oó]n|darse de baja|cancelar suscripci[oó]n|retirar)\b/i;
+const SECRET_PARAM = /token|key|secret|pass|auth|code|session|sig|jwt|otp|nonce|credential/i;
+
+/** "390x844,1280x800" → [{ width, height, name }]. */
+export function parseViewports(value = DEFAULT_VIEWPORTS) {
+  const list = String(value).split(',').map(s => s.trim()).filter(Boolean).map(s => {
+    const m = /^(\d{3,4})x(\d{3,4})$/.exec(s); if (!m) throw new CliError(`Bad viewport "${s}". Use WIDTHxHEIGHT, e.g. 390x844.`);
+    const width = Number(m[1]), height = Number(m[2]);
+    if (width < 200 || width > 4000 || height < 200 || height > 4000) throw new CliError(`Viewport ${s} is out of range (200–4000).`);
+    return { width, height, name: `${width}x${height}` };
+  });
+  if (!list.length || list.length > 8) throw new CliError('Give 1 to 8 viewports.');
+  return list;
+}
+
+/** Keep the page URL useful but drop credentials and the value of secret-looking query parameters. */
+export function redactUrl(u) {
+  const url = new URL(u); url.username = ''; url.password = '';
+  for (const k of [...url.searchParams.keys()]) if (SECRET_PARAM.test(k)) url.searchParams.set(k, 'REDACTED');
+  return url.href;
+}
+/** A request URL for the record: the path for this site, origin + path for others. Never the query string. */
+const pathOf = (u, origin) => { try { const x = new URL(u); return x.origin === origin ? x.pathname : x.origin + x.pathname; } catch { return '(invalid url)'; } };
+const scrub = text => String(text ?? '').replace(/([?&][^=\s&#]*(?:token|key|secret|pass|auth|code|session|sig)[^=\s&#]*=)[^&\s#'"]+/gi, '$1REDACTED').slice(0, 500);
+
+export async function loadPlaywright(project) {
+  const specs = [];
+  if (project) {
+    try { const req = createRequire(join(resolve(project), 'package.json')); for (const n of ['playwright', '@playwright/test']) { try { specs.push(pathToFileURL(req.resolve(n)).href); } catch { /* not installed there */ } } } catch { /* no package.json */ }
+  }
+  specs.push('playwright', '@playwright/test');
+  for (const spec of specs) {
+    try { const m = await import(spec); const pw = m.chromium ? m : m.default; if (pw?.chromium) return pw; } catch { /* try the next */ }
+  }
+  throw new CliError('Page audit needs Playwright. In your project run: npm i -D playwright && npx playwright install chromium');
+}
+
+// ---- runs inside the page (serialized by Playwright: no closures over module scope)
+function pageChecks({ phone, structural, destructive, max }) {
+  const out = [], vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  const add = (type, severity, el, title, evidence, measured = {}) => { if (out.filter(f => f.type === type).length < max) out.push({ type, severity, selector: el ? sel(el) : '', title, evidence, measured }); };
+  const isUi = el => Boolean(el.closest?.('[data-bug-ui]'));
+  function sel(el) {
+    if (!(el instanceof Element)) return '';
+    const unique = s => { try { return document.querySelectorAll(s).length === 1; } catch { return false; } };
+    if (el.id && unique('#' + CSS.escape(el.id))) return '#' + CSS.escape(el.id);
+    const tag = el.tagName.toLowerCase();
+    for (const a of ['data-testid', 'data-test', 'data-cy', 'name', 'aria-label']) {
+      const v = el.getAttribute(a); if (v && v.length < 60) { const s = `${tag}[${a}="${v.replace(/["\\]/g, '\\$&')}"]`; if (unique(s)) return s; }
+    }
+    const parts = []; let node = el;
+    while (node && node.nodeType === 1 && node !== document.documentElement && parts.length < 6) {
+      if (node.id && unique('#' + CSS.escape(node.id))) { parts.unshift('#' + CSS.escape(node.id)); break; }
+      const t = node.tagName.toLowerCase(), same = node.parentElement ? [...node.parentElement.children].filter(c => c.tagName === node.tagName) : [];
+      parts.unshift(same.length > 1 ? `${t}:nth-of-type(${same.indexOf(node) + 1})` : t);
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  const visible = el => { const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; return el.checkVisibility ? el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) : getComputedStyle(el).visibility !== 'hidden'; };
+  const disabled = el => el.matches(':disabled') || el.closest('[aria-disabled="true"], fieldset:disabled, [inert]') !== null;
+  const text = el => (el.innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+  function accName(el) {
+    const by = el.getAttribute('aria-labelledby');
+    const parts = [el.getAttribute('aria-label'), by ? by.split(/\s+/).map(id => document.getElementById(id)?.textContent ?? '').join(' ') : '', el.labels ? [...el.labels].map(l => l.textContent).join(' ') : '',
+      ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) ? '' : text(el), el.getAttribute('title'), el.getAttribute('alt'), el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type) ? el.value : '',
+      el.getAttribute('placeholder'), [...el.querySelectorAll('img[alt], svg[aria-label], [aria-label]')].map(n => n.getAttribute('alt') ?? n.getAttribute('aria-label')).join(' ')];
+    return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  }
+  const INTERACTIVE = 'button, a[href], [role=button], [role=link], input:not([type=hidden]), select, textarea, summary';
+  const controls = [...document.querySelectorAll(INTERACTIVE)].filter(el => !isUi(el) && visible(el)).slice(0, 400);
+
+  // Colour maths: normalise any CSS colour through a 1x1 canvas, composite ancestor backgrounds, WCAG relative luminance.
+  const ctx = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
+  const rgbaCache = new Map();
+  const rgba = c => { if (rgbaCache.has(c)) return rgbaCache.get(c); ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = '#000'; ctx.fillStyle = c; ctx.fillRect(0, 0, 1, 1); const d = ctx.getImageData(0, 0, 1, 1).data; const v = [d[0], d[1], d[2], d[3] / 255]; rgbaCache.set(c, v); return v; };
+  const over = (top, under) => { const a = top[3] + under[3] * (1 - top[3]); if (!a) return [255, 255, 255, 0]; return [0, 1, 2].map(i => (top[i] * top[3] + under[i] * under[3] * (1 - top[3])) / a).concat(a); };
+  const lum = c => { const [r, g, b] = c.slice(0, 3).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const hex = c => '#' + c.slice(0, 3).map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+  const pageBase = () => { const root = rgba(getComputedStyle(document.documentElement).backgroundColor); const body = document.body ? rgba(getComputedStyle(document.body).backgroundColor) : [0, 0, 0, 0]; return over(body, over(root, [255, 255, 255, 1])); };
+  function background(el) {
+    const layers = []; let opacity = 1;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const s = getComputedStyle(n); opacity *= Number(s.opacity);
+      if (s.backgroundImage !== 'none') return null; // gradient or picture behind the text: not measurable here
+      const c = rgba(s.backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break;
+    }
+    let bg = layers.length && layers[layers.length - 1][3] >= 1 ? [255, 255, 255, 1] : pageBase();
+    for (const c of layers.reverse()) bg = over(c, bg);
+    return { bg, opacity };
+  }
+  const contrastSeen = new Set();
+  const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node && out.filter(f => f.type === 'contrast').length < max; node = walker.nextNode()) {
+    const el = node.parentElement; if (!el || contrastSeen.has(el) || !node.textContent.trim() || isUi(el) || ['SCRIPT', 'STYLE', 'NOSCRIPT'].includes(el.tagName)) continue;
+    contrastSeen.add(el);
+    if (!visible(el) || disabled(el)) continue;
+    const s = getComputedStyle(el), b = background(el); if (!b) continue;
+    const fg = rgba(s.color); if (fg[3] === 0) continue;
+    const color = over([fg[0], fg[1], fg[2], fg[3] * b.opacity], b.bg);
+    const L1 = lum(color), L2 = lum(b.bg), ratio = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+    const size = parseFloat(s.fontSize), bold = Number(s.fontWeight) >= 700, large = size >= 24 || (bold && size >= 18.66), need = large ? 3 : 4.5;
+    if (ratio + 0.005 < need) add('contrast', ratio < 3 ? 'high' : 'medium', el, `Low text contrast ${ratio.toFixed(2)}:1`, `"${text(el).slice(0, 60)}" is ${hex(color)} on ${hex(b.bg)} = ${ratio.toFixed(2)}:1, needs ${need}:1 (${size}px, weight ${s.fontWeight})`, { ratio: Number(ratio.toFixed(2)), need, fg: hex(color), bg: hex(b.bg), fontSize: size });
+  }
+
+  const result = { documentWidth: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0), viewportWidth: vw, findings: out, links: [], candidates: [] };
+  if (!structural) return result;
+
+  // Horizontal overflow: the outermost elements that stick out sideways (not inside a scroll/clip container).
+  if (result.documentWidth > vw + 1) {
+    const offenders = [];
+    for (const el of [...document.body.querySelectorAll('*')].slice(0, 6000)) {
+      if (isUi(el) || offenders.some(o => o.contains(el))) continue;
+      const r = el.getBoundingClientRect(); if (r.width < 1 || (r.right <= vw + 1 && r.left >= -1)) continue;
+      let clipped = false; for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) { if (getComputedStyle(p).overflowX !== 'visible') { clipped = true; break; } }
+      if (!clipped && visible(el)) offenders.push(el);
+    }
+    if (!offenders.length) add('horizontal-overflow', phone ? 'high' : 'medium', null, `Page scrolls sideways at ${vw}px`, `document is ${result.documentWidth}px wide in a ${vw}px viewport`, { documentWidth: result.documentWidth, viewport: vw });
+    for (const el of offenders.slice(0, 5)) { const r = el.getBoundingClientRect(); add('horizontal-overflow', phone ? 'high' : 'medium', el, `Element sticks out of the ${vw}px viewport`, `document is ${result.documentWidth}px wide in a ${vw}px viewport; this element spans x=${Math.round(r.left)}..${Math.round(r.right)}px`, { documentWidth: result.documentWidth, viewport: vw, left: Math.round(r.left), right: Math.round(r.right) }); }
+  }
+  // Clipped text: content larger than a box that hides overflow, with no deliberate ellipsis or line clamp.
+  for (const el of [...document.body.querySelectorAll('*')].slice(0, 6000)) {
+    if (isUi(el) || !text(el) || el.children.length > 3) continue;
+    const s = getComputedStyle(el);
+    const hx = s.overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1 && s.textOverflow !== 'ellipsis' && s.overflowX !== 'auto' && s.overflowX !== 'scroll';
+    const hy = s.overflowY !== 'visible' && el.scrollHeight > el.clientHeight + 1 && s.webkitLineClamp === 'none' && s.overflowY !== 'auto' && s.overflowY !== 'scroll';
+    if ((hx || hy) && visible(el)) add('clipped-text', 'low', el, 'Text is cut off by its box', `content ${el.scrollWidth}x${el.scrollHeight}px in a ${el.clientWidth}x${el.clientHeight}px box with overflow hidden: "${text(el).slice(0, 60)}"`, { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+  }
+  // Controls placed outside the viewport sideways (off-canvas menus with fixed position or transforms are deliberate).
+  for (const el of controls) {
+    const r = el.getBoundingClientRect(); if (r.right > 0 && r.left < vw) continue;
+    let deliberate = false; for (let p = el; p; p = p.parentElement) { const s = getComputedStyle(p); if (s.position === 'fixed' || s.transform !== 'none' || p.getAttribute('aria-hidden') === 'true') { deliberate = true; break; } }
+    if (!deliberate && !(el.matches('a[href^="#"]') && r.right <= 0)) add('offscreen', 'low', el, 'Control is outside the viewport', `"${accName(el).slice(0, 40)}" at x=${Math.round(r.left)}..${Math.round(r.right)}px in a ${vw}px viewport`, { left: Math.round(r.left), right: Math.round(r.right), viewport: vw });
+  }
+  // Images.
+  const src = img => { const v = img.getAttribute('src') ?? ''; return v.startsWith('data:') ? v.slice(0, v.indexOf(',') + 1) + '…' : v.split('?')[0].slice(0, 120); };
+  for (const img of document.querySelectorAll('img')) {
+    if (isUi(img) || img.closest('[aria-hidden="true"]')) continue;
+    if ((img.currentSrc || img.getAttribute('src')) && img.complete && img.naturalWidth === 0) add('broken-image', 'medium', img, 'Image does not load', `img src "${src(img)}" has naturalWidth 0 after load`);
+    if (!img.hasAttribute('alt') && !['presentation', 'none'].includes(img.getAttribute('role') ?? '')) add('missing-alt', 'medium', img, 'Image has no alt attribute', `img src "${src(img)}" has no alt (use alt="" if decorative)`);
+  }
+  // Controls without an accessible name.
+  for (const el of controls) if (!accName(el)) add('unnamed-control', ['BUTTON', 'A'].includes(el.tagName) || el.getAttribute('role') ? 'high' : 'medium', el, `${el.tagName.toLowerCase()} has no accessible name`, `${el.outerHTML.replace(/\s+/g, ' ').slice(0, 160)}`);
+  // Tap targets at phone width (WCAG 2.5.8 minimum 24x24; inline links in a sentence are exempt).
+  if (phone) for (const el of controls) {
+    const r = el.getBoundingClientRect(); if (r.width >= 24 && r.height >= 24) continue;
+    const parent = el.parentElement, inline = getComputedStyle(el).display === 'inline' && parent && text(parent).length > text(el).length + 1;
+    if (!inline) add('small-tap-target', 'low', el, `Tap target ${Math.round(r.width)}x${Math.round(r.height)}px`, `"${accName(el).slice(0, 40)}" is ${Math.round(r.width)}x${Math.round(r.height)}px; minimum 24x24`, { width: Math.round(r.width), height: Math.round(r.height) });
+  }
+  // Overlapping controls: one actually covers the other at the centre of their intersection.
+  const boxes = controls.slice(0, 250).map(el => ({ el, r: el.getBoundingClientRect() }));
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+    const a = boxes[i], b = boxes[j]; if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+    const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left), h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+    if (w <= 0 || h <= 0 || w * h < 0.25 * Math.min(a.r.width * a.r.height, b.r.width * b.r.height)) continue;
+    const cx = Math.max(a.r.left, b.r.left) + w / 2, cy = Math.max(a.r.top, b.r.top) + h / 2;
+    if (cy < 0 || cy > vh) continue;
+    const top = document.elementFromPoint(cx, cy), covered = a.el.contains(top) ? b : b.el.contains(top) ? a : null;
+    if (covered) add('overlap', 'medium', covered.el, 'Control is covered by another control', `"${accName(covered.el).slice(0, 40)}" is covered by ${sel(covered === a ? b.el : a.el)} over ${Math.round(w)}x${Math.round(h)}px`, { overlapWidth: Math.round(w), overlapHeight: Math.round(h) });
+  }
+  // Misaligned icons: icon-only items in one row whose vertical centres differ by more than 2px.
+  const iconOf = el => { if (el.matches('svg, img') ) return el; if (text(el)) return null; const inner = el.querySelectorAll('svg, img'); return inner.length === 1 ? inner[0] : null; };
+  const seenParents = new Set();
+  for (const icon of document.querySelectorAll('svg, img')) {
+    const r0 = icon.getBoundingClientRect(); if (r0.width > 64 || r0.height > 64 || r0.width < 4) continue;
+    let item = icon; while (item.parentElement && item.parentElement.children.length === 1 && !text(item.parentElement)) item = item.parentElement;
+    const parent = item.parentElement; if (!parent || seenParents.has(parent) || isUi(parent)) continue; seenParents.add(parent);
+    const icons = [...parent.children].map(iconOf).filter(n => n && visible(n)).map(n => ({ n, r: n.getBoundingClientRect() }));
+    if (icons.length < 2 || Math.max(...icons.map(i => i.r.top)) >= Math.min(...icons.map(i => i.r.bottom))) continue;
+    const centers = icons.map(i => i.r.top + i.r.height / 2), sorted = [...centers].sort((x, y) => x - y), ref = icons.length === 2 ? centers[0] : sorted[Math.floor(sorted.length / 2)];
+    icons.forEach((i, k) => { const d = centers[k] - ref; if (Math.abs(d) > 2) add('misaligned', 'low', i.n, 'Icon is not vertically aligned with its row', `vertical centre ${centers[k].toFixed(1)}px vs row ${ref.toFixed(1)}px (off by ${d.toFixed(1)}px) in ${sel(parent)}`, { offsetPx: Number(d.toFixed(1)) }); });
+  }
+  // Same-origin links for the link check, and click candidates.
+  const destr = new RegExp(destructive, 'i'), seen = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    if (isUi(a)) continue; let u; try { u = new URL(a.href); } catch { continue; }
+    if (u.origin !== location.origin || !/^https?:$/.test(u.protocol) || destr.test(accName(a) + ' ' + u.pathname)) continue;
+    u.hash = ''; if (u.href === location.href.split('#')[0] || seen.has(u.href)) continue; seen.add(u.href);
+    result.links.push({ href: u.href, selector: sel(a) });
+  }
+  for (const el of controls) {
+    if (!el.matches('button, a[href], [role=button], [role=link], input[type=submit], input[type=button], input[type=reset], summary') || disabled(el)) continue;
+    const label = accName(el).slice(0, 80), href = el.getAttribute('href') ?? '';
+    let external = false; if (el.matches('a[href]')) { try { const u = new URL(el.href); external = u.origin !== location.origin || !/^https?:$/.test(u.protocol) && u.protocol !== 'javascript:'; } catch { external = true; } }
+    result.candidates.push({ selector: sel(el), label, tag: el.tagName.toLowerCase(), destructive: destr.test(`${label} ${href} ${el.getAttribute('title') ?? ''}`), external });
+  }
+  return result;
+}
+
+/** Abort every non-GET request (and, when asked, top-level navigations to other sites) and record it. */
+async function guard(context, origin, blocked, { foreignNav = false } = {}) {
+  await context.addInitScript(() => {
+    window.__bfSubmits = 0;
+    window.addEventListener('submit', e => { window.__bfSubmits++; e.preventDefault(); }, true);
+    HTMLFormElement.prototype.submit = function () { window.__bfSubmits++; };
+  });
+  await context.route('**/*', route => {
+    const req = route.request(), method = req.method();
+    if (method !== 'GET' && method !== 'HEAD') { blocked.push({ method, url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
+    if (foreignNav && req.isNavigationRequest() && new URL(req.url()).origin !== origin) { blocked.push({ method: 'NAVIGATE', url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
+    return route.continue();
+  });
+}
+
+function watch(page, origin) {
+  const log = { console: [], pageErrors: [], failed: [], requests: 0, dialogs: 0 };
+  // Chrome's "Failed to load resource" line duplicates the failed request (recorded with its URL); blocked ones are ours.
+  page.on('console', m => { if (m.type() === 'error' && !/^Failed to load resource|ERR_BLOCKED_BY_CLIENT/.test(m.text())) log.console.push(scrub(m.text())); });
+  page.on('pageerror', e => log.pageErrors.push(scrub(e?.message ?? e)));
+  page.on('request', () => { log.requests++; });
+  page.on('requestfailed', r => { const t = r.failure()?.errorText ?? ''; if (!/BLOCKED_BY_CLIENT|aborted/i.test(t)) log.failed.push({ method: r.method(), url: pathOf(r.url(), origin), status: null, error: t.slice(0, 80) }); });
+  page.on('response', r => { if (r.status() >= 400) log.failed.push({ method: r.request().method(), url: pathOf(r.url(), origin), status: r.status() }); });
+  page.on('dialog', d => { log.dialogs++; d.dismiss().catch(() => {}); });
+  return log;
+}
+
+async function load(page, url) {
+  await page.goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT });
+  await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+  await page.waitForTimeout(250);
+}
+
+/**
+ * Measure `url` at every viewport in light and dark mode, check same-origin links, and click-probe the controls.
+ * Writes probe.json, screens/ and clicks/ into `outDir` (the blind workspace's _bugframe_audit) and returns the probe.
+ */
+export async function probePage({ url, viewports = parseViewports(), click = true, outDir, evidencePrefix = '_bugframe_audit', project, playwright, log = () => {} }) {
+  let target; try { target = new URL(url); } catch { throw new CliError('Give the page URL to audit, e.g. http://localhost:3000/settings'); }
+  if (!/^https?:$/.test(target.protocol)) throw new CliError('Only http and https pages can be audited.');
+  const pw = playwright ?? await loadPlaywright(project), origin = target.origin;
+  await mkdir(join(outDir, 'screens'), { recursive: true }); await mkdir(join(outDir, 'clicks'), { recursive: true });
+  let browser;
+  try { browser = await pw.chromium.launch({ headless: true }); } catch (e) { throw new CliError(`Could not start Chromium (${String(e?.message ?? e).split('\n')[0]}). Run: npx playwright install chromium`); }
+  const probe = { tool: 'bugframe page audit', url: redactUrl(url), startedAt: new Date().toISOString(), viewports: [], findings: [], links: [], clicks: [], blockedRequests: [], notes: [] };
+  const raw = [], blocked = [], logs = [], candidatesBy = new Map();
+  try {
+    for (const vp of viewports) for (const scheme of ['light', 'dark']) {
+      const name = `${vp.name}-${scheme}`, phone = vp.width < 600;
+      log(`probe ${name}`);
+      const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, colorScheme: scheme, deviceScaleFactor: 1, isMobile: phone, hasTouch: phone, serviceWorkers: 'block' });
+      try {
+        await guard(context, origin, blocked);
+        const page = await context.newPage(), pageLog = watch(page, origin); logs.push({ name: `${vp.name} ${scheme}`, log: pageLog });
+        await load(page, url);
+        const shot = `screens/${name}.png`;
+        await page.screenshot({ path: join(outDir, shot), fullPage: true, timeout: 20_000 }).catch(() => page.screenshot({ path: join(outDir, shot) }));
+        const res = await page.evaluate(pageChecks, { phone, structural: scheme === 'light', destructive: DESTRUCTIVE.source, max: 15 });
+        probe.viewports.push({ name, width: vp.width, height: vp.height, scheme, screenshot: `${evidencePrefix}/${shot}`, documentWidth: res.documentWidth });
+        for (const f of res.findings) raw.push({ ...f, viewport: `${vp.name} ${scheme}`, screenshot: `${evidencePrefix}/${shot}` });
+        if (scheme === 'light' && !probe.links.length && res.links.length) probe.links = res.links.slice(0, MAX_LINKS);
+        if (scheme === 'light') candidatesBy.set(vp.name, res.candidates);
+      } catch (e) { probe.notes.push(`${name}: the page could not be measured (${scrub(String(e?.message ?? e).split('\n')[0])}).`); }
+      finally { await context.close(); }
+    }
+    if (!probe.viewports.length) throw new CliError(`The page did not load at any viewport: ${probe.notes[0] ?? url}`);
+
+    // Link check and click probe share one context at the viewport closest to a laptop (1280 wide).
+    const vp = [...viewports].sort((a, b) => Math.abs(a.width - 1280) - Math.abs(b.width - 1280))[0];
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, serviceWorkers: 'block' });
+    try {
+      await guard(context, origin, blocked, { foreignNav: true });
+      for (const link of probe.links) {
+        try { const r = await context.request.get(link.href, { maxRedirects: 5, timeout: 10_000, failOnStatusCode: false }); link.status = r.status(); await r.dispose(); } catch (e) { link.status = null; link.error = String(e?.message ?? e).split('\n')[0].slice(0, 80); }
+        link.url = pathOf(link.href, origin); delete link.href;
+        if (link.status === null || link.status >= 400) raw.push({ type: 'broken-link', severity: 'medium', selector: link.selector, title: `Link to ${link.url} is broken`, evidence: `GET ${link.url} → ${link.status ?? link.error}`, measured: { status: link.status }, viewport: `${vp.name} light` });
+      }
+      if (click) {
+        const candidates = candidatesBy.get(vp.name) ?? (await (async () => { const p = await context.newPage(); try { await load(p, url); return (await p.evaluate(pageChecks, { phone: false, structural: true, destructive: DESTRUCTIVE.source, max: 15 })).candidates; } finally { await p.close(); } })());
+        let n = 0;
+        for (const c of candidates) {
+          if (c.destructive) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: destructive' }); continue; }
+          if (c.external) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: external link' }); continue; }
+          if (n >= MAX_CLICKS) { probe.clicks.push({ selector: c.selector, label: c.label, outcome: 'skipped: click limit' }); continue; }
+          n++;
+          probe.clicks.push(await clickOne({ context, url, c, n, outDir, evidencePrefix, origin, blocked, vp, raw }));
+        }
+      }
+    } finally { await context.close(); }
+  } finally { await browser.close(); }
+
+  // Errors and failed requests: one finding per distinct message, listing every viewport that saw it.
+  const merge = (type, severity, key, title, evidence, items) => {
+    const m = new Map();
+    for (const { name, item } of items) { const k = key(item); if (!m.has(k)) m.set(k, { item, where: [] }); m.get(k).where.push(name); }
+    for (const { item, where } of [...m.values()].slice(0, 10)) raw.push({ type, severity: typeof severity === 'function' ? severity(item) : severity, selector: '', title: title(item), evidence: evidence(item), viewport: where.join(', ') });
+  };
+  const all = kind => logs.flatMap(({ name, log }) => log[kind].map(item => ({ name, item })));
+  merge('page-error', 'high', m => m, m => `Uncaught error: ${m.split('\n')[0].slice(0, 80)}`, m => m, all('pageErrors'));
+  merge('console-error', 'medium', m => m, m => `Console error: ${m.split('\n')[0].slice(0, 80)}`, m => m, all('console'));
+  merge('failed-request', r => (r.status === null || r.status >= 500 ? 'high' : 'medium'), r => `${r.method} ${r.url} ${r.status}`, r => `${r.method} ${r.url} fails${r.status ? ` with ${r.status}` : ''}`, r => `${r.method} ${r.url} → ${r.status ?? r.error}`, all('failed'));
+
+  const seenBlocked = new Set();
+  for (const b of blocked) { const k = `${b.method} ${b.url}`; if (!seenBlocked.has(k) && seenBlocked.size < 50) { seenBlocked.add(k); probe.blockedRequests.push(b); } }
+  if (probe.blockedRequests.length) probe.notes.push(`The audit blocks every non-GET request: ${probe.blockedRequests.length} distinct request(s) were not sent (see blockedRequests). Content that depends on them may look empty or show an error state.`);
+  const AREA = { 'horizontal-overflow': 'responsive', offscreen: 'responsive', 'clipped-text': 'visual', overlap: 'visual', misaligned: 'visual', contrast: 'accessibility', 'missing-alt': 'accessibility', 'unnamed-control': 'accessibility', 'small-tap-target': 'accessibility', 'broken-image': 'content' };
+  // The same element failing the same check at several widths is one finding with every viewport listed.
+  const unique = new Map();
+  for (const f of raw) { const k = `${f.type}\u0000${f.selector}\u0000${f.title}`; const have = unique.get(k); if (!have) unique.set(k, { ...f }); else if (!have.viewport.split(', ').includes(f.viewport)) have.viewport += `, ${f.viewport}`; }
+  probe.findings = [...unique.values()].map((f, i) => ({ id: `P${i + 1}`, area: AREA[f.type] ?? 'behaviour', ...f }));
+  probe.finishedAt = new Date().toISOString();
+  await writeFile(join(outDir, 'probe.json'), JSON.stringify(probe, null, 2));
+  return probe;
+}
+
+async function clickOne({ context, url, c, n, outDir, evidencePrefix, origin, blocked, vp, raw }) {
+  const page = await context.newPage(), pageLog = watch(page, origin), popups = [];
+  const onPage = p => { if (p !== page) { popups.push(pathOf(p.url(), origin)); p.close().catch(() => {}); } };
+  context.on('page', onPage);
+  const record = { selector: c.selector, label: c.label };
+  try {
+    await load(page, url);
+    const el = page.locator(c.selector).first();
+    if (!(await el.count()) || !(await el.isVisible())) return { ...record, outcome: 'not found in a fresh page' };
+    await page.evaluate(() => { window.__bfMut = 0; new MutationObserver(list => { window.__bfMut += list.length; }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); });
+    const before = { url: page.url(), requests: pageLog.requests, blocked: blocked.length, console: pageLog.console.length, errors: pageLog.pageErrors.length, dialogs: pageLog.dialogs, failed: pageLog.failed.length };
+    let clickError = '';
+    try { await el.click({ timeout: 3000 }); } catch (e) { clickError = String(e?.message ?? e).split('\n')[0].slice(0, 160); }
+    await page.waitForTimeout(700);
+    await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+    const mutations = await page.evaluate(() => window.__bfMut ?? 0).catch(() => null);
+    const submits = await page.evaluate(() => window.__bfSubmits ?? 0).catch(() => 0);
+    const effects = { domChanged: mutations === null ? null : mutations > 0, navigated: page.url() !== before.url ? pathOf(page.url(), origin) : false, dialog: pageLog.dialogs > before.dialogs,
+      requestsAttempted: pageLog.requests - before.requests, blockedRequests: blocked.slice(before.blocked).map(b => `would have sent ${b.method} ${b.url}`), formSubmitIntercepted: submits > 0, popup: popups[0] ?? false,
+      consoleErrors: pageLog.console.slice(before.console), pageErrors: pageLog.pageErrors.slice(before.errors) };
+    effects.failedRequests = pageLog.failed.slice(before.failed).filter(r => r.url !== effects.navigated).map(r => `${r.method} ${r.url} → ${r.status ?? r.error}`);
+    const errored = effects.consoleErrors.length > 0 || effects.pageErrors.length > 0 || effects.failedRequests.length > 0;
+    const dead = !clickError && !effects.domChanged && !effects.navigated && !effects.dialog && !effects.requestsAttempted && !effects.blockedRequests.length && !effects.formSubmitIntercepted && !effects.popup && !errored && mutations !== null;
+    const outcome = clickError ? 'could not click' : dead ? 'appears dead' : errored ? 'error after click' : 'responded';
+    let screenshot;
+    if (dead || errored || clickError) { screenshot = `${evidencePrefix}/clicks/c${n}.png`; await page.screenshot({ path: join(outDir, 'clicks', `c${n}.png`) }).catch(() => { screenshot = undefined; }); }
+    const where = `${vp.name} light`;
+    if (dead) raw.push({ type: 'dead-control', severity: 'high', selector: c.selector, title: `"${c.label || c.tag}" does nothing when clicked`, evidence: 'click caused no DOM change, navigation, dialog, request, popup or console output within 700ms', viewport: where, screenshot });
+    if (errored) raw.push({ type: 'click-error', severity: 'high', selector: c.selector, title: `Clicking "${c.label || c.tag}" raises an error`, evidence: [...effects.pageErrors, ...effects.consoleErrors, ...effects.failedRequests][0], viewport: where, screenshot });
+    if (clickError) raw.push({ type: 'dead-control', severity: 'medium', selector: c.selector, title: `"${c.label || c.tag}" cannot be clicked`, evidence: clickError, viewport: where, screenshot });
+    return { ...record, outcome, effects, ...(screenshot ? { screenshot } : {}) };
+  } catch (e) { return { ...record, outcome: 'probe error', error: scrub(String(e?.message ?? e).split('\n')[0]) }; }
+  finally { context.off('page', onPage); await page.close().catch(() => {}); }
+}

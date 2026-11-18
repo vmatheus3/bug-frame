@@ -1,4 +1,4 @@
-import { ApiError, fetchThumb, listReports, reviewReport, sendReport, type ApiConfig } from './api';
+import { ApiError, fetchThumb, getAccess, listReports, reviewReport, sendReport, type ApiConfig } from './api';
 import { captureViewport, cropImage, maskImage, maskRects, selectorList } from './capture';
 import { buildContext, installConsoleCapture } from './context';
 import { resolveEnabled, setStored } from './enabled';
@@ -15,6 +15,7 @@ const MIN_SIDE = 24;
 const ICON_BUG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M8 12h8M12 8v8"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const ICON_SCAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg>';
 const ICON_SPIN = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>';
 const FOCUSABLE = 'button:not([disabled]), textarea, input, summary, select, [href], [tabindex]:not([tabindex="-1"])';
 
@@ -55,6 +56,8 @@ class Bugframe implements BugframeInstance {
   private hint = '';
   private error = '';
   private accessDenied = false;
+  private role: string | null = null;
+  private notice = '';
   private capturedViewport: { w: number; h: number; dpr: number } | null = null;
   private capturedScroll: { x: number; y: number } | null = null;
   private full = '';
@@ -92,7 +95,7 @@ class Bugframe implements BugframeInstance {
     this.rid = reporterId(options.reporterId);
     if (this.serverMode && options.endpoint) this.api = { endpoint: options.endpoint, token: options.token, reporterId: this.rid, fetch: options.fetch ?? ((...a) => fetch(...a)) };
     const hide = () => { this.clearReports(); this.reset(); this.menu = false; this.render(); };
-    const restore = (event: PageTransitionEvent) => { if (event.persisted) void this.loadReports(); };
+    const restore = (event: PageTransitionEvent) => { if (event.persisted) { void this.loadReports(); void this.loadAccess(); } };
     window.addEventListener('pagehide', hide); window.addEventListener('pageshow', restore);
     this.cleanups.push(() => { window.removeEventListener('pagehide', hide); window.removeEventListener('pageshow', restore); });
     const refresh = () => this.sync();
@@ -130,6 +133,7 @@ class Bugframe implements BugframeInstance {
     if (this.o.avoid?.length) { const run = () => this.avoid(); window.addEventListener('resize', run); this.avoidTimer = window.setInterval(run, 1500); this.cleanups.push(() => { window.removeEventListener('resize', run); if (this.avoidTimer) clearInterval(this.avoidTimer); }); }
     this.render();
     void this.loadReports();
+    void this.loadAccess();
   }
   private unmount() { this.unlockPage(); this.host?.remove(); this.host = null; this.root = null; this.wrap = null; this.phase = 'idle'; this.menu = false; this.clearReports(); if (this.avoidTimer) { clearInterval(this.avoidTimer); this.avoidTimer = null; } }
 
@@ -159,7 +163,7 @@ class Bugframe implements BugframeInstance {
 
   // ---- data
   private clearReports() {
-    this.dataGeneration++; this.reports = null; this.reviewMessage = '';
+    this.dataGeneration++; this.reports = null; this.reviewMessage = ''; this.role = null;
     for (const url of this.thumbs.values()) URL.revokeObjectURL(url); this.thumbs.clear();
   }
   private async loadReports() {
@@ -184,6 +188,44 @@ class Bugframe implements BugframeInstance {
       else this.root?.querySelector('.menu .list')?.append(h('p', { role: 'alert' }, this.t.reviewFailed));
     }
   }
+  /** Learn the verified role so administrators get "Analyze this page". The server enforces it again on POST. */
+  private async loadAccess() {
+    if (!this.api) return;
+    const generation = this.dataGeneration;
+    let role: string | null = null;
+    try { role = (await getAccess(this.api)).role ?? null; } catch { role = null; }
+    if (generation !== this.dataGeneration) return;
+    this.role = role;
+    // Insert into an open menu in place: a late answer must not rebuild the menu under the user's finger.
+    const main = this.root?.querySelector('.menu .main');
+    if (role === 'admin' && main && !this.root?.querySelector('.menu .analyze')) main.after(this.analyzeItem());
+  }
+  private analyzeItem(): HTMLElement {
+    const item = h('button', { type: 'button', role: 'menuitem', class: 'item analyze' }, icon(ICON_SCAN), this.t.menuAnalyze);
+    item.addEventListener('click', () => void this.analyze());
+    return item;
+  }
+  /** Admin only: queue a page analysis of what is on screen now. No area, no form: whole screen + context. */
+  private async analyze() {
+    if (!this.api || this.phase !== 'idle') return;
+    this.menu = false; this.error = ''; this.notice = '';
+    this.capturedViewport = { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio }; this.capturedScroll = { x: window.scrollX, y: window.scrollY };
+    this.go('capturing');
+    try {
+      const raw = await (this.o.captureFn ? this.o.captureFn() : captureViewport({ maxPixelRatio: this.o.maxPixelRatio, exclude: this.o.exclude }));
+      this.full = await maskImage(raw, maskRects({ maskInputs: this.o.maskInputs !== false, selectors: this.maskSelectors }), { w: window.innerWidth, h: window.innerHeight });
+      this.region = this.full; this.rect = { x: 0, y: 0, w: this.capturedViewport.w, h: this.capturedViewport.h };
+      this.kind = 'audit'; this.text = this.t.auditDescription; this.chosen = [];
+      const payload = await this.buildReport();
+      const res = await sendReport(this.api, payload);
+      this.reset(); this.notice = this.t.auditQueued; this.render(); this.restoreFocus(); void this.loadReports();
+      try { this.o.onSent?.({ id: res.id, downloaded: false }); } catch (e) { this.fail(e); }
+    } catch (e) {
+      this.fail(e); this.reset();
+      this.error = e instanceof ApiError && (e.status === 401 || e.status === 403) ? this.t.accessDenied : this.t.auditFailed;
+      this.render(); this.restoreFocus();
+    }
+  }
   private async loadThumbs() {
     if (!this.api) return;
     for (const r of (this.reports ?? []).slice(0, 12)) {
@@ -206,7 +248,7 @@ class Bugframe implements BugframeInstance {
 
   private async begin() {
     this.opener = (this.root?.activeElement as Element | null) ?? null;
-    this.menu = false; this.error = ''; this.hint = ''; this.capturedViewport = { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio }; this.capturedScroll = { x: window.scrollX, y: window.scrollY }; this.go('capturing');
+    this.menu = false; this.error = ''; this.notice = ''; this.hint = ''; this.capturedViewport = { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio }; this.capturedScroll = { x: window.scrollX, y: window.scrollY }; this.go('capturing');
     try {
       const raw = await (this.o.captureFn ? this.o.captureFn() : captureViewport({ maxPixelRatio: this.o.maxPixelRatio, exclude: this.o.exclude }));
       const rects = maskRects({ maskInputs: this.o.maskInputs !== false, selectors: this.maskSelectors });
@@ -313,11 +355,12 @@ class Bugframe implements BugframeInstance {
     const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'menu', 'aria-expanded': String(this.menu), disabled: busy });
     fab.append(icon(busy ? ICON_SPIN : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 6h15M5 12h15M5 18h15"/></svg>'));
     if (open > 0 && !busy) fab.append(h('b', { class: 'count', 'aria-label': t.openCount.replace('{n}', String(open)) }, String(open)));
-    fab.addEventListener('click', () => { this.menu = !this.menu; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
+    fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
     const start = h('button', { type: 'button', class: 'feedback-start', disabled: busy }, icon(busy ? ICON_SPIN : ICON_BUG), t.button);
     start.addEventListener('click', () => void this.begin());
     wrap.append(start, fab);
     if (this.error && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'alert' }, this.error));
+    else if (this.notice && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'status' }, this.notice));
     if (this.menu) wrap.append(this.renderMenu());
     wrap.addEventListener('keydown', e => { if (e.key === 'Escape' && this.menu) { this.menu = false; this.render(); this.restoreFocus(); } });
     return wrap;
@@ -328,6 +371,7 @@ class Bugframe implements BugframeInstance {
     const main = h('button', { type: 'button', role: 'menuitem', class: 'item main' }, icon(ICON_BUG), t.menuReport);
     main.addEventListener('click', () => void this.begin());
     menu.append(main);
+    if (this.api && this.role === 'admin') menu.append(this.analyzeItem());
     if (this.api) {
       const list = h('div', { class: 'list' }, h('p', { class: 'list-title' }, `${t.menuMine}${this.reports ? ` (${this.reports.length})` : ''}`));
       if (this.reports === null) list.append(h('p', { class: 'empty' }, t.loading));
@@ -463,7 +507,7 @@ class Bugframe implements BugframeInstance {
     const again = h('button', { type: 'button', disabled: sending, class: 'link' }, t.anotherArea);
     again.addEventListener('click', () => { this.rect = null; this.go('select'); });
     preview.append(again); content.append(preview, h('label', { for: 'bf-text' }, t.descriptionLabel));
-    const ta = h('textarea', { id: 'bf-text', rows: 3, maxlength: 4000, disabled: sending, placeholder: ({ bug: t.hintBug, content: t.hintContent, design: t.hintDesign, idea: t.hintIdea })[this.kind], 'aria-required': 'true' });
+    const ta = h('textarea', { id: 'bf-text', rows: 3, maxlength: 4000, disabled: sending, placeholder: ({ bug: t.hintBug, content: t.hintContent, design: t.hintDesign, idea: t.hintIdea } as Record<string, string>)[this.kind] ?? t.hintBug, 'aria-required': 'true' });
     ta.value = this.text; content.append(ta);
     const sendBtn = h('button', { type: 'button', class: 'send' }, sending ? t.sending : t.send);
     const sync = () => { sendBtn.disabled = sending || !this.text.trim(); };

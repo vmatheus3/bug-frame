@@ -19,7 +19,8 @@ export type ReportContext = {
   metadata: Record<string, unknown>;
 };
 
-export type FeedbackKind = 'bug' | 'content' | 'design' | 'idea';
+/** 'audit' (page analysis) is sent only by the administrator menu item. */
+export type FeedbackKind = 'bug' | 'content' | 'design' | 'idea' | 'audit';
 export type ReportStatus = 'open' | 'reviewed' | 'in_progress' | 'ready_for_review' | 'changes_requested' | 'approved' | 'fixed' | 'wontfix';
 
 export type ReportSummary = {
@@ -74,6 +75,10 @@ export type Strings = {
   menuReport: string;
   menuMine: string;
   menuTurnOff: string;
+  menuAnalyze: string;
+  auditDescription: string;
+  auditQueued: string;
+  auditFailed: string;
   loading: string;
   nothingSent: string;
   captureFailed: string;

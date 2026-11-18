@@ -419,6 +419,9 @@ bugframe [--dir ./bug-reports] <command>
   reopen <id>                       import <report.zip>
   [--remote HTTPS_API_URL --credentials FILE --timeout 30000] list|show|close|ready|reopen
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL]
+  audit <url> --project FOLDER [--out DIR] [--viewports …] [--agent claude|none | --agent-cmd CMD] [--model ID] [--no-click] [--timeout MS] [--keep]
+  audit --watch --project FOLDER [--base-url http://localhost:3000] [--once] [--out DIR]
+  audit --check-blind [--model ID]
 ```
 
 `--dir` can also come from `BUGFRAME_DIR`. `serve` reads `BUGFRAME_ADMIN_TOKEN` and `BUGFRAME_AUTH_MODULE`.
@@ -490,6 +493,80 @@ does **not** occur — red on the broken page, green once the bug is fixed. Repo
 get an honest `TODO` instead of a fake green assertion. Adjust navigation and auth to your app; keep the console
 assertion.
 
+## Analyze a page (blind audit)
+
+Developers get one more item in the widget menu: **Analyze this page**. It is shown only when the server says the
+signed-in account is an administrator (`GET /access` → `role: "admin"`), and the server refuses page-analysis requests
+from anyone else (`403`). One click captures the screen and context like a normal report (no area, no form) and queues a
+report of kind `audit`. Then, on the machine that has the code:
+
+```bash
+npx bugframe audit --watch --dir ./bug-reports --project . --base-url http://localhost:3000
+```
+
+For each queued analysis it builds a **blind copy** of the project, measures the page in a real browser, runs a
+specialised auditor on that evidence and the code, and stores `audit.md` (and `audit.json`) next to the report. The
+request moves to *Ready for your review* with a short note (severity counts and the top three findings); the private
+inbox shows a **Page analysis** badge and the full report as plain text. Failures leave the request open with the
+reason; each request gets at most three attempts. `--base-url` swaps the captured origin for your dev server, so a
+request made on a staging page can be measured locally. Watch mode works on a local reports folder only: the API has
+no route for uploading results, by design.
+
+Audit any URL directly:
+
+```bash
+npx bugframe audit http://localhost:3000/settings --project .   # writes ./bugframe-audit/<time>/audit.md
+```
+
+The probe needs [Playwright](https://playwright.dev) with Chromium (`npm i -D playwright && npx playwright install
+chromium`); it is loaded only when an audit runs and is not a dependency of Bugframe. Custom storage adapters keep
+working; to hold `audit.md` they implement the optional `writeAttachment(id, name, buffer)` (see `types/server.d.ts`),
+otherwise the result is saved as the request note only.
+
+**What it checks.** For every viewport (default `390x844,768x1024,1280x800,1440x900`) in light and dark mode: a
+full-page screenshot, console and page errors, failed requests (method, path and status; never bodies or query
+strings), sideways overflow and the elements causing it, clipped and offscreen elements, text contrast below WCAG AA
+(disabled controls are exempt, as in WCAG), broken images and images without `alt`, controls without an accessible
+name, tap targets under 24×24 px at phone width, controls covering each other, icons misaligned in a row, and
+same-origin links that fail. Every finding carries the selector, viewport and measured numbers. The auditor
+(`prompts/AUDIT_PAGE.md`) then reads the screenshots and the code, frontend and backend, adds what a browser cannot
+measure (design consistency, wrong or placeholder text, broken flows, missing states) and gives each finding a
+severity, evidence, the root cause as `file:line` and a minimal fix, separating *verified* from *suspected*. Its answer
+must match a fixed format; when it does not, the run is marked *degraded*, the raw answer is kept and `audit.md` falls
+back to the probe-only report.
+
+**The click probe is safe by construction.** Each enabled, visible button and link (up to 40) is clicked in a fresh
+page. Every non-GET request is aborted and recorded ("would have sent POST /api/x"), forms never reach the network,
+navigations to other sites are aborted, dialogs are dismissed, and controls whose name or link says *delete, remove,
+pay, purchase, log out, sign out, cancel subscription* (and the Portuguese and Spanish equivalents) are never clicked.
+A control is reported as *appears dead* only when nothing at all happened: no DOM change, navigation, dialog, request,
+popup or console output. Because writes are blocked, content that needs a POST to load may look empty; the report says
+so. Run it against your own local or staging environment.
+
+**What "blind" means.** The auditor must judge the page, not follow your team's AI rules. The copy (a new folder under
+the system temp dir) leaves out, at any depth and in any letter case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`,
+`CLAUDE.local.md`, `GEMINI.md`, `.claude`, `.agents`, `.agent`, `.keel`, `.codex`, `.cursor`, `.cursorrules`,
+`.windsurfrules`, `.windsurf`, `.clinerules`, `.roo`, `.roomodes`, `.aider*`, `.github/copilot-instructions.md`,
+`.github/instructions`, `.continue`, `.kiro`, `memory-bank`; secrets (`.env*` except `.env.example`, `*.pem`, `*.key`,
+`*.p12`, `id_rsa*`); and `.git`, `node_modules`, `dist`, `build`, `.next`, `coverage`, binaries over 1 MB. Symlinks are
+never followed. Add your own exclusions to a `.bugframe-blind` file in the project root (one glob per line, `#`
+comments, a trailing `/` matches folders, a `/` inside the pattern anchors it to the root). The copy refuses to start
+when an instruction file sits in any parent folder, is capped at 50,000 files / 200 MB, records only the *names* of
+what it left out, and is deleted afterwards (`--keep` keeps it).
+
+The default auditor is Claude Code (`--agent claude`, when `claude` is on your PATH), started in the copy with its own
+system prompt and nothing else: no user or project settings, hooks, skills, slash commands, MCP servers or session
+files, only the Read/Grep/Glob tools, and permission rules that allow reading `./**` and deny everything else.
+`npx bugframe audit --check-blind` proves it on your machine: it plants canary instruction files in a project and checks
+the model never sees them, then asks the model to read a file outside its folder and checks the read is refused. Limits:
+the auditor still sees the system prompt, the date and the signed-in account's environment details that Claude Code
+always sends; and a global `~/.claude/CLAUDE.md` was not present on the machine where this was verified, so run
+`--check-blind` after creating one. Codex is not offered as a blind auditor: `codex exec --ignore-user-config -c
+project_doc_max_bytes=0` still loads the global `~/.codex/AGENTS.md`. `--agent-cmd "<command>"` runs any other agent
+(prompt and task on stdin, the evidence in `_bugframe_audit/`, the report on stdout) with a warning that blindness is
+then your responsibility. `--agent none` writes the probe-only report plus `AUDIT_TASK.md` and `AUDIT_PAGE.md`, so you
+can run an auditor yourself. Details: [docs/page-audit.md](docs/page-audit.md).
+
 ## Privacy and security notes
 
 - Pictures are taken in the browser. Inputs, password fields, `data-bug-mask` elements and your `mask` selectors are painted over
@@ -498,7 +575,7 @@ assertion.
 - Nothing is sent anywhere except your endpoint. No analytics, no third-party services.
 - All report routes require an approved account or admin credential. `authorize` verifies login and reporting permission on every request.
   URL flags, public tokens, and browser reporter ids never grant access. The admin token never belongs in a browser.
-- Server hardening: ids are validated against one exact pattern before touching the filesystem, only three file names exist,
+- Server hardening: ids are validated against one exact pattern before touching the filesystem, only five fixed file names exist (report.json, two screenshots, and the optional page-analysis audit.md/audit.json),
   uploads must be real PNGs (signature + header), images are served `nosniff` with a locked CSP, tokens are compared in constant
   time, bodies are size-limited while streaming.
 - Reports can be shown to AI agents: treat their text as untrusted input (the supplied prompts say so).

@@ -16,7 +16,7 @@ const terminalStatuses = new Set(['approved', 'fixed', 'wontfix']);
 const searchable = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
 const statusKey = { open: 'open', reviewed: 'reviewed', in_progress: 'inProgress', ready_for_review: 'ready', changes_requested: 'changesRequested', approved: 'approved', fixed: 'fixed', wontfix: 'notPlanned' };
 const statusName = value => t(statusKey[value] ?? 'feedback');
-const kindName = value => t(['bug', 'content', 'design', 'idea'].includes(value ?? 'bug') ? value ?? 'bug' : 'feedback');
+const kindName = value => t(['bug', 'content', 'design', 'idea', 'audit'].includes(value ?? 'bug') ? value ?? 'bug' : 'feedback');
 const dateLabel = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? t('unknownDate') : date.toLocaleString(ui.locale, { dateStyle: 'medium', timeStyle: 'short' }); };
 if (customer) { $('history-panel').open = false; $('screenshots-panel').open = false; }
 const message = (key, values) => { lastMessage = { key, values }; $('message').textContent = key ? t(key, values) : ''; };
@@ -30,7 +30,8 @@ const releaseImages = () => {
 const clearPrivateContent = () => {
   delete document.body.dataset.detailOpen; $('back-to-requests').hidden = true;
   generation++; agentStatus = null; $('agent-status').textContent = ''; $('delivery-status').textContent = ''; selectedId = null; selectedReport = null; rows = []; invitationRows = []; createdInvitation = null; releaseImages(); $('detail').hidden = true; $('reports').replaceChildren();
-  for (const id of ['description', 'info', 'context', 'resolution', 'customer-note', 'current-text', 'suggested-text', 'invite-expiry']) $(id).textContent = '';
+  for (const id of ['description', 'info', 'context', 'resolution', 'customer-note', 'current-text', 'suggested-text', 'invite-expiry', 'audit-text']) $(id).textContent = '';
+  $('audit-panel').hidden = true;
   for (const id of ['note', 'adjustment', 'invite-link', 'invite-email']) $(id).value = '';
   $('invitations').replaceChildren(); $('activity').replaceChildren(); $('invite-result').hidden = true;
   visibleRows = []; $('export-preview').value = ''; $('export-fallback').hidden = true; $('copy-report').hidden = true; $('report-count').textContent = ''; $('no-results').hidden = true;
@@ -66,7 +67,7 @@ function renderRows() {
     const title = document.createElement('strong'), meta = document.createElement('span'), status = document.createElement('span'), kind = document.createElement('span');
     title.className = 'request-title'; title.textContent = report.description;
     meta.className = 'request-meta'; status.className = 'request-status'; status.dataset.status = report.status; status.textContent = statusName(report.status);
-    kind.className = 'request-kind'; kind.textContent = kindName(report.kind); meta.append(status, kind);
+    kind.className = 'request-kind'; kind.textContent = kindName(report.kind); if (report.kind === 'audit') kind.dataset.kind = 'audit'; meta.append(status, kind);
     const footer = document.createElement('span'); footer.className = 'request-footer';
     const date = new Date(report.createdAt); footer.textContent = Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(ui.locale, { month: 'short', day: 'numeric' });
     button.append(title, meta, footer);
@@ -128,6 +129,13 @@ async function show(id) {
   $('technical').hidden = customer; $('status-form').hidden = customer;
   $('status').value = report.status; $('note').value = report.note; $('save').disabled = report.status === 'approved';
   $('wording').hidden = report.kind !== 'content';
+  // Page analysis: the markdown is shown as plain text (textContent), never parsed into HTML.
+  $('audit-panel').hidden = customer || report.kind !== 'audit'; $('audit-text').textContent = ''; $('audit-waiting').hidden = Boolean(report.files?.audit);
+  if (!customer && report.kind === 'audit' && report.files?.audit) {
+    const text = await (await request(`/reports/${encodeURIComponent(id)}/audit.md`)).text();
+    if (selectedId !== id || version !== generation) return;
+    $('audit-text').textContent = text;
+  }
   $('review-form').hidden = !customer || report.status !== 'ready_for_review'; $('adjustment').value = '';
   for (const name of ['region', 'full']) {
     const response = await request(`/reports/${encodeURIComponent(id)}/${name}.png`);

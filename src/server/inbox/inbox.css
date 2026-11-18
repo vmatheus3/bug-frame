@@ -90,6 +90,7 @@ main > section { min-height: 570px; padding: 28px 32px; }
 .request-status[data-status=in_progress], .request-status[data-status=ready_for_review] { color: #726014; background: #f9f1d4; }
 .request-status[data-status=approved], .request-status[data-status=fixed] { color: var(--success); background: var(--success-soft); }
 .request-kind { color: var(--muted); font-size: 11px; }
+.request-kind[data-kind="audit"] { color: var(--accent); font-weight: 600; }
 .request-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .request-date { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 #empty, #no-results { padding: 24px 20px; margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
