@@ -54,6 +54,14 @@ describe('accessibility', () => {
     fab.click(); expect(q('.fab')!.getAttribute('aria-expanded')).toBe('true'); expect(shadow().activeElement?.classList.contains('main')).toBe(true);
     q('.fab-wrap')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.menu')).toBeNull();
   });
+  it('the round menu button shows a bug drawing, never the three-line menu icon', () => {
+    make(); const svg = q('.fab svg')!;
+    expect(svg.outerHTML).not.toContain('M5 6h15M5 12h15M5 18h15');
+    expect(svg.getAttribute('data-icon')).toBe('bug');
+    expect(svg.querySelectorAll('circle, rect, ellipse').length).toBeGreaterThanOrEqual(2); // head and body
+    expect(svg.getAttribute('stroke-linecap')).toBe('round'); expect(svg.getAttribute('fill')).toBe('none');
+    expect(q('.fab')!.getAttribute('aria-haspopup')).toBe('menu');
+  });
   it('sheet is a modal dialog with a live region, traps Tab and closes on Escape', async () => {
     await toSheet({ types: ['A'] });
     const sheet = q('.sheet')!; expect(sheet.getAttribute('role')).toBe('dialog'); expect(sheet.getAttribute('aria-modal')).toBe('true'); expect(q('#bf-title')).toBeTruthy();

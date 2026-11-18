@@ -13,6 +13,8 @@ export { resolveStrings, LOCALES } from './i18n';
 type Phase = 'idle' | 'capturing' | 'select' | 'sheet' | 'sending' | 'sent';
 const MIN_SIDE = 24;
 const ICON_BUG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M8 12h8M12 8v8"/></svg>';
+/** The round menu button: a little bug (head, antennae, body with a centre line, three legs a side), drawn for Bugframe. */
+const ICON_INSECT = '<svg data-icon="bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5.5" r="2"/><ellipse cx="12" cy="14" rx="5" ry="6.5"/><path d="M12 9v11.5M10.5 4.2 8.5 2.2M13.5 4.2l2-2M7.2 11 4 9M7 14H3.5M7.2 17 4 19.5M16.8 11 20 9M17 14h3.5M16.8 17l3.2 2.5"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 const ICON_SCAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg>';
@@ -353,7 +355,7 @@ class Bugframe implements BugframeInstance {
     this.wrap = wrap;
     const open = (this.reports ?? []).filter(r => !['fixed', 'wontfix', 'approved'].includes(r.status)).length;
     const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'menu', 'aria-expanded': String(this.menu), disabled: busy });
-    fab.append(icon(busy ? ICON_SPIN : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 6h15M5 12h15M5 18h15"/></svg>'));
+    fab.append(icon(busy ? ICON_SPIN : ICON_INSECT));
     if (open > 0 && !busy) fab.append(h('b', { class: 'count', 'aria-label': t.openCount.replace('{n}', String(open)) }, String(open)));
     fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
     const start = h('button', { type: 'button', class: 'feedback-start', disabled: busy }, icon(busy ? ICON_SPIN : ICON_BUG), t.button);
