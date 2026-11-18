@@ -268,3 +268,27 @@ for (const [locale, statusLabel, saveLabel, saved, approval, approved, invitatio
     } finally { await context.close(); }
   });
 }
+
+test('developer page analysis: the admin-only menu item queues it, audit --watch processes it, the inbox shows the report', async ({ page }) => {
+  test.setTimeout(240_000);
+  await openMenu(page); // signed in as an approved customer: no analysis item
+  await expect(page.getByRole('menuitem', { name: /Leave feedback on this page/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Analyze this page/ })).toHaveCount(0);
+  await signIn(page, 'e2e-admin-password');
+  await openMenu(page);
+  await page.getByRole('menuitem', { name: /Analyze this page/ }).click();
+  await expect(page.locator('.toast')).toContainText('bugframe audit --watch');
+  const audits = () => readdirSync(DIR).filter(n => existsSync(join(DIR, n, 'report.json'))).map(n => JSON.parse(readFileSync(join(DIR, n, 'report.json'), 'utf8'))).filter(r => r.kind === 'audit');
+  expect(audits()).toHaveLength(1);
+  const [queued] = audits();
+  expect(queued).toMatchObject({ status: 'open', description: 'Page analysis requested' });
+  expect(CLI('--dir', DIR, 'audit', '--watch', '--once', '--project', 'examples/plain-html', '--agent', 'none', '--base-url', 'http://127.0.0.1:4455', '--viewports', '390x844,1280x800')).toBe('Processed 1 page-analysis request.');
+  const [done] = audits();
+  expect(done.status).toBe('ready_for_review'); expect(done.files.audit).toBe('audit.md'); expect(done.note).toMatch(/^Page analysis: /);
+  await page.goto('/bugs/');
+  await page.locator('#reports button').filter({ hasText: 'Page analysis requested' }).click();
+  await expect(page.locator('#reports .request-kind[data-kind="audit"]').first()).toHaveText('Page analysis');
+  await expect(page.locator('#audit-panel')).toBeVisible();
+  await expect(page.locator('#audit-text')).toContainText('# Page audit: http://127.0.0.1:4455/');
+  await expect(page.locator('#audit-waiting')).toBeHidden();
+});

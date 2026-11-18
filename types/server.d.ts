@@ -1,4 +1,5 @@
-export type FeedbackKind = 'bug' | 'content' | 'design' | 'idea';
+/** 'audit' is a page analysis request; only an administrator can create one. */
+export type FeedbackKind = 'bug' | 'content' | 'design' | 'idea' | 'audit';
 export type ReportStatus = 'open' | 'reviewed' | 'in_progress' | 'ready_for_review' | 'changes_requested' | 'approved' | 'fixed' | 'wontfix';
 
 export interface Report {
@@ -27,7 +28,9 @@ export interface Report {
     metadata: Record<string, unknown>;
   };
   delivery?: { eventId: string; target: string; status: 'pending' | 'retrying' | 'failed' | 'delivered'; attempts: number; nextAttemptAt: string | null; deliveredAt: string | null; lastAttemptAt?: string; lastStatus?: number | null };
-  files: { region: string; full: string };
+  files: { region: string; full: string; audit?: 'audit.md' };
+  /** Set by `bugframe audit --watch` on page-analysis reports. */
+  audit?: { attempts: number; startedAt?: string; finishedAt?: string; degraded?: boolean; counts?: Record<string, number>; lastError?: string; noteOnly?: boolean };
 }
 
 /** Implement this to store reports somewhere else (S3, a database, GitHub Issues...). All methods are async. */
@@ -40,7 +43,11 @@ export interface StorageAdapter {
   list(): Promise<Report[]>;
   /** Merge `patch` into the stored report (status, note, closedAt) and return it, or null if it does not exist. */
   update(id: string, patch: Partial<Report>): Promise<Report | null>;
-  readFile(id: string, name: 'region.png' | 'full.png'): Promise<Buffer | null>;
+  readFile(id: string, name: 'region.png' | 'full.png' | 'audit.md' | 'audit.json'): Promise<Buffer | null>;
+  /** Optional. Store a page-analysis attachment next to the report. Accept only the exact names 'audit.md' and
+   * 'audit.json' (at most 2 MB) and throw for anything else. Adapters without it still work: page analysis then
+   * records its summary in the report note only, and GET /reports/:id/audit.md answers 404. */
+  writeAttachment?(id: string, name: 'audit.md' | 'audit.json', data: Buffer): Promise<void>;
 }
 
 /** Identity obtained by verifying a session/token and checking reporting permission on the server. */

@@ -1,8 +1,9 @@
-// Filesystem storage: one folder per report, <dir>/<id>/{report.json, region.png, full.png}. Nothing else is needed to run the tool.
+// Filesystem storage: one folder per report, <dir>/<id>/{report.json, region.png, full.png} plus the optional
+// page-analysis attachments audit.md / audit.json. Nothing else is needed to run the tool.
 import { mkdir, readFile, writeFile, readdir, rename, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { ID_RE, FILE_NAMES, STATUSES } from './util.mjs';
+import { ID_RE, FILE_NAMES, ATTACHMENT_NAMES, MAX_ATTACHMENT_BYTES, STATUSES } from './util.mjs';
 
 /**
  * @param {{ dir: string }} options
@@ -47,10 +48,25 @@ export function createFileStorage({ dir }) {
       await writeJson(f, next); return next;
     },
     async readFile(id, name) {
-      const f = folderOf(id); if (!f || !FILE_NAMES.includes(name)) return null;
+      const f = folderOf(id); if (!f || !(FILE_NAMES.includes(name) || ATTACHMENT_NAMES.includes(name))) return null;
       try { return await readFile(join(f, name)); } catch { return null; }
     },
+    async writeAttachment(id, name, data) {
+      const f = folderOf(id), buf = attachmentBytes(name, data);
+      if (!f) throw new Error('bad report id');
+      if (!await readJson(f)) throw new Error('no such report');
+      const tmp = join(f, `${name}.${randomBytes(4).toString('hex')}.tmp`);
+      await writeFile(tmp, buf, { mode: 0o600, flag: 'wx' }); await rename(tmp, join(f, name));
+    },
   };
+}
+
+/** Exact allow-listed name and bounded size, or throw. */
+function attachmentBytes(name, data) {
+  if (!ATTACHMENT_NAMES.includes(name)) throw new Error('attachment name not allowed');
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ''), 'utf8');
+  if (buf.length > MAX_ATTACHMENT_BYTES) throw new Error('attachment too large');
+  return buf;
 }
 
 /** In-memory storage for tests and demos. */
@@ -62,6 +78,7 @@ export function createMemoryStorage() {
     async get(id) { return map.get(id)?.report ? structuredClone(map.get(id).report) : null; },
     async list() { return [...map.values()].map(v => structuredClone(v.report)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))); },
     async update(id, patch) { const v = map.get(id); if (!v) return null; v.report = { ...v.report, ...patch, id }; return structuredClone(v.report); },
-    async readFile(id, name) { const v = map.get(id); return v && FILE_NAMES.includes(name) ? v.files[name === 'region.png' ? 'region' : 'full'] : null; },
+    async readFile(id, name) { const v = map.get(id); if (!v) return null; if (ATTACHMENT_NAMES.includes(name)) return v.attachments?.[name] ?? null; return FILE_NAMES.includes(name) ? v.files[name === 'region.png' ? 'region' : 'full'] : null; },
+    async writeAttachment(id, name, data) { const buf = attachmentBytes(name, data), v = map.get(id); if (!v) throw new Error('no such report'); v.attachments = { ...v.attachments, [name]: buf }; },
   };
 }

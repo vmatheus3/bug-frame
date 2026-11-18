@@ -6,6 +6,11 @@ export const isOpen = status => !['approved', 'fixed', 'wontfix'].includes(statu
 export const isActionable = status => isOpen(status) && status !== 'ready_for_review';
 export const ID_RE = /^bug-\d{8}-\d{6}-[a-f0-9]{4}$/;
 export const FILE_NAMES = ['region.png', 'full.png'];
+/** Kinds only a verified administrator may create (a page analysis runs the developer's own tools). */
+export const ADMIN_KINDS = ['audit'];
+/** The only extra files a storage adapter may hold for a report, written by `bugframe audit`. */
+export const ATTACHMENT_NAMES = ['audit.md', 'audit.json'];
+export const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 export const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const pad = n => String(n).padStart(2, '0');
 

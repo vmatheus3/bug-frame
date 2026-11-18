@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account settings (audit fixture)</title>
+  <!-- A page with planted defects for the page-audit end-to-end test. Every defect is intentional. -->
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; background: #fff; color: #111; }
+    nav { display: flex; gap: 16px; }
+    .row { display: flex; gap: 12px; align-items: flex-start; margin: 16px 0; }
+    .row svg { width: 20px; height: 20px; }
+    .row .low { margin-top: 6px; }
+    .banner { width: 600px; background: #f1f1f1; padding: 8px; box-sizing: border-box; }
+    @media (min-width: 700px) { .banner { width: auto; } }
+    .faint { color: #c4c4c4; }
+    .tiny { display: inline-block; width: 16px; height: 16px; }
+    .tiny svg { width: 16px; height: 16px; }
+    button { min-height: 32px; }
+    @media (prefers-color-scheme: dark) { body { background: #121212; color: #eee; } .banner { background: #222; } .faint { color: #3a3a3a; } }
+  </style>
+</head>
+<body>
+  <nav><a href="/about">About</a><a href="/missing-page">Pricing</a><a href="/logout">Log out</a></nav>
+  <h1>Account settings</h1>
+  <p class="faint" id="saved-at">Last saved two minutes ago</p>
+  <div class="banner" id="promo">Upgrade banner that is 600 pixels wide on phones</div>
+  <img id="avatar" width="48" height="48" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+  <div class="row" id="icons">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/></svg>
+    <svg class="low" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/></svg>
+    <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/></svg>
+  </div>
+  <p>Recent items: <a href="/items/7?op=delete">Item seven</a>, <a href="/items/8/deleteItem">Item eight</a>.</p>
+  <p>Need help? <a class="tiny" href="/about" aria-label="Info"><svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16"/></svg></a></p>
+  <div class="row">
+    <button id="export" type="button">Export</button>
+    <button id="open-help" type="button">Help</button>
+    <button id="notify" type="button">Notify me</button>
+    <button id="recalc" type="button">Recalculate</button>
+    <button id="delete-account" type="button">Delete account</button>
+    <button id="live" type="button">Connect live</button>
+    <button id="icon-only" type="button"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect width="16" height="16"/></svg></button>
+  </div>
+  <form method="post" action="/api/save"><input name="display-name" aria-label="Display name" value="Ada"><button id="save">Save</button></form>
+  <div id="help" hidden><p>Help text.</p></div>
+  <script>
+    document.getElementById('open-help').addEventListener('click', () => { document.getElementById('help').hidden = false; });
+    document.getElementById('notify').addEventListener('click', () => { fetch('/api/notify', { method: 'POST', body: '{}' }).catch(() => {}); });
+    document.getElementById('recalc').addEventListener('click', () => { throw new Error('totals is undefined'); });
+    document.getElementById('delete-account').addEventListener('click', () => { fetch('/api/account', { method: 'DELETE' }); fetch('/api/account/delete'); });
+    fetch('/api/missing-data').then(r => { if (!r.ok) console.error('Could not load account data: ' + r.status); });
+    fetch('/api/track', { method: 'POST', body: '{}' }).catch(() => {});
+    navigator.sendBeacon('/api/beacon', 'x');
+    const socket = path => { try { new WebSocket('ws://' + location.host + path); } catch (e) { /* blocked */ } };
+    socket('/live-load');
+    document.getElementById('live').addEventListener('click', () => socket('/live-click'));
+  </script>
+</body>
+</html>

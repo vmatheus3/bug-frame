@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createFileInvitationStorage, invitationEmail, invitationService } from './invitations.mjs';
 import { createNotifications } from './notifications.mjs';
 import { createFileStorage } from './storage-fs.mjs';
-import { FEEDBACK_KINDS, ID_RE, STATUSES, isOpen, cleanContext, decodePng, newReportId, safeEqual, summarize, text } from './util.mjs';
+import { ADMIN_KINDS, FEEDBACK_KINDS, ID_RE, STATUSES, isOpen, cleanContext, decodePng, newReportId, safeEqual, summarize, text } from './util.mjs';
 
 const MB = 1024 * 1024;
 const DEFAULTS = { maxBodyBytes: 24 * MB, maxImageBytes: 10 * MB, maxDescription: 4000, rateLimit: { max: 10, windowMs: 60_000 } };
@@ -97,12 +97,13 @@ export function createBugframe(options = {}) {
     if (limited(`account:${who.reporter}`) || limited(`ip:${clientIp(req, ctx)}`)) return err(429, 'rate_limited', 'Too many reports. Try again in a minute.', { 'retry-after': String(Math.ceil((rate?.windowMs ?? 60000) / 1000)) });
     const { body, error } = await readJsonBody(req); if (error) return error;
     const b = body && typeof body === 'object' ? body : {};
+    const kind = b.kind ?? 'bug';
+    if (ADMIN_KINDS.includes(kind) && who.role !== 'admin') return err(403, 'forbidden', 'Page analysis is available to administrators only.');
+    if (!FEEDBACK_KINDS.includes(kind) && !ADMIN_KINDS.includes(kind)) return err(400, 'bad_kind', 'Choose bug, content, design or idea.');
     const description = text(b.description, o.maxDescription).trim();
     if (!description) return err(400, 'description_required', 'Describe what you would like to improve.');
     const region = decodePng(b.region, o.maxImageBytes), full = decodePng(b.full, o.maxImageBytes);
     if (!region || !full) return err(400, 'images_required', 'The screenshots are missing, too large, or not PNG files.');
-    const kind = b.kind ?? 'bug';
-    if (!FEEDBACK_KINDS.includes(kind)) return err(400, 'bad_kind', 'Choose bug, content, design or idea.');
     let report;
     for (let attempt = 0; attempt < 5; attempt++) {
       const d = (o.now ?? (() => new Date()))(), id = (o.generateId ?? newReportId)(d);
@@ -130,6 +131,15 @@ export function createBugframe(options = {}) {
     const buf = await storage.readFile(id, file);
     if (!buf) return err(404, 'not_found', 'Not found.');
     return new Response(buf, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", 'content-length': String(buf.length) } });
+  }
+
+  /** The page-analysis report written by `bugframe audit`. Only adapters that opted in (writeAttachment) are asked for it. */
+  async function auditMarkdown(who, id) {
+    if (who.role !== 'admin') return err(403, 'forbidden', 'Admin only.');
+    if (!ID_RE.test(id) || typeof storage.writeAttachment !== 'function' || !await storage.get(id)) return err(404, 'not_found', 'Not found.');
+    const buf = await storage.readFile(id, 'audit.md');
+    if (!buf) return err(404, 'not_found', 'Not found.');
+    return new Response(buf, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", 'content-length': String(buf.length) } });
   }
 
   async function patch(req, id) {
@@ -232,6 +242,7 @@ export function createBugframe(options = {}) {
         if (parts.length === 1 && req.method === 'POST') return withCors(await create(req, ctx, who));
         if (parts.length === 1 && req.method === 'GET') return withCors(await list(req, who, url));
         if (parts.length === 3 && req.method === 'GET' && (parts[2] === 'region.png' || parts[2] === 'full.png')) return withCors(await image(req, who, parts[1], parts[2]));
+        if (parts.length === 3 && req.method === 'GET' && parts[2] === 'audit.md') return withCors(await auditMarkdown(who, parts[1]));
         if (parts.length === 2 && req.method === 'GET') {
           if (who.role !== 'admin') return withCors(err(403, 'forbidden', 'Admin only.'));
           if (!ID_RE.test(parts[1])) return withCors(err(404, 'not_found', 'Not found.'));

@@ -13,6 +13,12 @@ export async function sendReport(c: ApiConfig, body: SendPayload): Promise<{ id:
   if (!res.ok) throw new ApiError(res.status, `Report failed with status ${res.status}`);
   return (await res.json()) as { id: string; status: ReportStatus };
 }
+/** The verified role of the signed-in account (admin, client); throws on 401/403 like the other calls. */
+export async function getAccess(c: ApiConfig): Promise<{ role?: string }> {
+  const res = await c.fetch(`${trim(c.endpoint)}/access`, { headers: headers(c), cache: 'no-store' });
+  if (!res.ok) throw new ApiError(res.status, `Access check failed with status ${res.status}`);
+  return (await res.json()) as { role?: string };
+}
 export async function listReports(c: ApiConfig): Promise<ReportSummary[]> {
   const res = await c.fetch(`${trim(c.endpoint)}/reports`, { headers: headers(c), cache: 'no-store' });
   if (!res.ok) throw new ApiError(res.status, `List failed with status ${res.status}`);
