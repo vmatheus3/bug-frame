@@ -127,8 +127,8 @@ export const LOCALES = {
     "agentUsesLogin": "Customers use their usual website login. No extra Bugframe password.",
     "agentCommandLabel": "Run this in your project terminal",
     "agentPrivateCredential": "Use your private server credential for the connector. Keep it out of website code.",
-    "agentConnected": "Codex is listening for new requests.",
-    "agentDisconnected": "Codex is not connected. Run the command below to connect.",
+    "agentConnected": "A connector is listening for new requests.",
+    "agentDisconnected": "No connector is listening. Run the command below to connect Codex, or use bugframe connect agent for another agent.",
     "deliverySummary": "Webhook delivery: {pending} waiting · {delivered} delivered · {failed} need retry",
     "retryNotifications": "Retry failed deliveries"
   },
@@ -259,8 +259,8 @@ export const LOCALES = {
     "agentUsesLogin": "Los clientes usan el inicio de sesión de tu sitio. Sin otra contraseña de Bugframe.",
     "agentCommandLabel": "Ejecuta esto en la terminal de tu proyecto",
     "agentPrivateCredential": "Usa la credencial privada del servidor para el conector. No la incluyas en el código del sitio.",
-    "agentConnected": "Codex está esperando nuevas solicitudes.",
-    "agentDisconnected": "Codex no está conectado. Ejecuta el comando de abajo para conectarlo.",
+    "agentConnected": "Un conector está esperando nuevas solicitudes.",
+    "agentDisconnected": "Ningún conector está activo. Ejecuta el comando de abajo para conectar Codex, o usa bugframe connect agent para otro agente.",
     "deliverySummary": "Webhook: {pending} pendientes · {delivered} entregadas · {failed} por reintentar",
     "retryNotifications": "Reintentar entregas fallidas"
   },
@@ -391,8 +391,8 @@ export const LOCALES = {
     "agentUsesLogin": "Os clientes usam o login do seu site. Sem outra senha do Bugframe.",
     "agentCommandLabel": "Execute isto no terminal do seu projeto",
     "agentPrivateCredential": "Use a credencial privada do servidor no conector. Não a inclua no código do site.",
-    "agentConnected": "O Codex está aguardando novos pedidos.",
-    "agentDisconnected": "O Codex não está conectado. Execute o comando abaixo para conectar.",
+    "agentConnected": "Um conector está aguardando novos pedidos.",
+    "agentDisconnected": "Nenhum conector está ativo. Execute o comando abaixo para conectar o Codex, ou use bugframe connect agent para outro agente.",
     "deliverySummary": "Webhook: {pending} pendentes · {delivered} entregues · {failed} para tentar de novo",
     "retryNotifications": "Tentar entregas com falha novamente"
   }

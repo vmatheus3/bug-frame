@@ -8,7 +8,7 @@ import { createBugframe } from '../server/handler.mjs';
 import { toNodeListener } from '../server/node.mjs';
 import { CliError, cmdClose, cmdExport, cmdImport, cmdList, cmdReady, cmdReopen, cmdShow } from './commands.mjs';
 import { setupProject } from './setup.mjs';
-import { connectCodex } from './codex.mjs';
+import { AgentCommandClient, connectCodex } from './codex.mjs';
 import { remoteCommand, remoteCredentials, remoteExport } from './remote.mjs';
 import { auditCommand } from './audit/index.mjs';
 import { crawlCommand } from './crawl/index.mjs';
@@ -22,6 +22,9 @@ Commands:
                                        website login, no extra customer password; private Codex setup
   connect codex --remote HTTPS_API --project FOLDER [--include-existing] [--once]
                                        notify a dedicated Codex inbox about new requests; keep running
+  connect agent --remote HTTPS_API --project FOLDER --agent-cmd "COMMAND" [--include-existing] [--once]
+                                       run any agent or script for each batch of new requests: ticket ids
+                                       on stdin (JSON) and in BUGFRAME_REPORT_IDS, never the customer's text
   list [--open] [--json]               one line per report
   show <id> [--json]                   everything recorded for one report
   export [--all] [--out WORKLIST.md] [--budget TOKENS|NNNc|none] [--playwright]
@@ -90,10 +93,12 @@ async function main(argv) {
   const need = () => { if (!arg) throw new CliError(`${cmd} needs an id`); return arg; };
   if (cmd === 'setup') return setupProject({ project: values.project, site: values.site, authModule: values['auth-module'] });
   if (cmd === 'connect') {
-    if (arg !== 'codex' || !values.remote || values.dir) throw new CliError('Use connect codex --remote HTTPS_API_URL --project PROJECT_FOLDER.');
+    if (!['codex', 'agent'].includes(arg) || !values.remote || values.dir) throw new CliError('Use connect codex --remote HTTPS_API_URL --project PROJECT_FOLDER, or connect agent --remote HTTPS_API_URL --project PROJECT_FOLDER --agent-cmd "COMMAND".');
+    if ((arg === 'agent') !== Boolean(values['agent-cmd'])) throw new CliError(arg === 'agent' ? 'connect agent needs --agent-cmd "COMMAND": the command to run for each batch of new tickets.' : '--agent-cmd belongs to connect agent.');
+    const clientFactory = arg === 'agent' ? () => new AgentCommandClient({ command: values['agent-cmd'], project: resolve(values.project ?? '.') }) : undefined;
     const token = await remoteCredentials(values.credentials), controller = new AbortController();
     const stop = () => controller.abort(); process.once('SIGINT', stop); process.once('SIGTERM', stop);
-    try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal }); return null; }
+    try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal, clientFactory }); return null; }
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
   }
   if (cmd === 'audit') return auditCommand(arg, { ...values, dir: values.dir }, dir);
