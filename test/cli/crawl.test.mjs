@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { createFrontier, globToRegExp, isIdSegment, normalizeUrl, routeTemplate } from '../../src/cli/crawl/urls.mjs';
+import { createFrontier, globToRegExp, isDateSegment, isIdSegment, normalizeUrl, routeTemplate } from '../../src/cli/crawl/urls.mjs';
 import { analyze, classifyClick, languageMix } from '../../src/cli/crawl/detect.mjs';
 import { crawlHtml, crawlMarkdown } from '../../src/cli/crawl/report.mjs';
-import { assertLocalTarget, crawlLogin, crawlSite, failsOn } from '../../src/cli/crawl/index.mjs';
+import { assertLocalTarget, checkTargets, crawlLogin, crawlSite, failsOn } from '../../src/cli/crawl/index.mjs';
+import { isDestructive } from '../../src/cli/audit/probe.mjs';
 import { fallbackSummary, summarize, trimForSummary, validateSummary } from '../../src/cli/crawl/summary.mjs';
 import { cleanup, tmpDir } from '../helpers.mjs';
 
@@ -28,6 +29,46 @@ test('record ids collapse into one route template, so a 10,000-record list is on
   assert.equal(routeTemplate(`${O}/clients/456/invoices/9?tab=2&page=3`), '/clients/:id/invoices/:id?page&tab');
   assert.equal(routeTemplate(`${O}/app#/reports/77?sort=asc`), '/app#/reports/:id?sort');
   assert.equal(routeTemplate(`${O}/blog/how-we-built-it-2024`), '/blog/how-we-built-it-2024');
+});
+
+test('dates, versions and numbered pages collapse too, so a calendar or a paginated list cannot grow the crawl for ever', () => {
+  for (const s of ['2026-01', '2026-01-15', '15.01.2026', '2026-W03', '2026-q1']) assert.equal(isDateSegment(s), true, s);
+  for (const s of ['2026', 'jan-2026', 'page-2', 'v2']) assert.equal(isDateSegment(s), false, s);
+  assert.equal(routeTemplate(`${O}/cal/2026-01`), '/cal/:date');
+  assert.equal(routeTemplate(`${O}/cal/2026-02`), '/cal/:date');
+  assert.equal(routeTemplate(`${O}/docs/1.2.3/intro`), '/docs/:id/intro');
+  assert.equal(routeTemplate(`${O}/events/2026-11-18/seats/10-20`), '/events/:date/seats/:id');
+  // A number inside a word is not an id, but pages that differ only by it share a shape: a few are opened, the rest counted.
+  const f = createFrontier({ origin: O, maxPages: 100 });
+  for (let i = 1; i <= 20; i++) f.add(`${O}/blog/page-${i}`);
+  assert.equal(f.queue.length, 6);
+  assert.equal(f.add(`${O}/blog/page-21`).status, 'template');
+  assert.equal(f.skipped.template.get('/blog/page-:n').size, 15);
+  assert.equal(f.add(`${O}/blog/how-we-built-it-2024`).status, 'queued', 'another shape is not affected');
+});
+
+test('session-ending and destructive words are recognised in English, Portuguese and Spanish, in labels and in addresses', () => {
+  for (const s of ['Log off', 'Logoff', 'Sign off', 'Log out', 'End session', '/logoff', '/account/signOff', '/auth/log-off?next=/', 'Sair', 'Deslogar', 'Encerrar sessão', 'Terminar sessao', 'Fechar sessão', 'Salir', 'Cerrar sesión', 'Finalizar sesion', 'Desconectarse'])
+    assert.equal(isDestructive(s), true, s);
+  for (const s of ['Login', 'Sign in', 'Offline mode', 'Blog offers', 'Sessions', 'Resultados', 'Salida de datos', '/catalog/office-chairs', 'Signed-off reports are listed here'.replace('Signed-off', 'Approved')])
+    assert.equal(isDestructive(s), false, s);
+});
+
+test('a link labelled as destructive bans its address: never queued, dropped from the queue, never link-checked', async () => {
+  const f = createFrontier({ origin: O });
+  f.add(`${O}/`); f.add(`${O}/bye`);
+  assert.deepEqual(f.queue.map(q => q.url), [`${O}/`, `${O}/bye`]);
+  f.ban(`${O}/bye`);
+  assert.deepEqual(f.queue.map(q => q.url), [`${O}/`], 'a queued page is dropped when its link turns out to be a sign-out');
+  assert.equal(f.add(`${O}/bye`).status, 'destructive');
+  assert.equal(f.accepted, 1);
+  assert.ok(f.skipped.destructive.has('/bye'));
+  const fetched = [], pages = [{ url: `${O}/`, route: '/', status: 200, links: [{ url: `${O}/bye` }, { url: `${O}/a` }, { url: `${O}/b` }, { url: `${O}/c` }] }];
+  let calls = 0;
+  const status = await checkTargets({ pages, frontier: f, stopped: () => calls >= 2, check: async url => { calls++; fetched.push(url); return { status: 200 }; } });
+  assert.deepEqual(fetched, [`${O}/a`, `${O}/b`], 'the banned address is never fetched, and the check stops with the crawl (Ctrl+C or --max-minutes)');
+  assert.deepEqual(status.get(`${O}/bye`), { status: null, skipped: 'destructive' });
+  assert.deepEqual(status.get(`${O}/c`), { status: null, skipped: 'stopped' });
 });
 
 test('include/exclude globs: * stays in one segment, ** spans segments', () => {
@@ -74,6 +115,27 @@ test('click outcomes: navigates, opens, changes, calls-backend, error, dead, ski
   assert.equal(classifyClick({ outcome: 'could not click' }).outcome, 'dead');
   assert.deepEqual(classifyClick({ outcome: 'skipped: destructive' }), { outcome: 'skipped', reason: 'destructive' });
   assert.equal(classifyClick({ outcome: 'probe error', error: 'x' }).outcome, 'unknown');
+  // A page that keeps changing on its own: a click with no effect of its own is unknown, not dead and not working.
+  const unclear = classifyClick({ outcome: 'unclear: the page keeps changing on its own', effects: { background: true } });
+  assert.equal(unclear.outcome, 'unknown'); assert.match(unclear.reason, /keeps changing on its own/);
+  // A redirect the guard refused is reported with its full target, never as a place the click reached.
+  const off = classifyClick(r({ blockedRequests: ['would have sent REDIRECT /go → https://other.example/landing (another site)'] }));
+  assert.equal(off.outcome, 'navigates'); assert.equal(off.to, null); assert.match(off.reason, /redirect not followed.*https:\/\/other\.example\/landing/);
+  // A GET to a destructive-looking API is blocked once a click was dispatched; it is listed once, as blocked.
+  assert.deepEqual(classifyClick(r({ blockedRequests: ['would have sent BLOCKED GET /api/logout'], calls: ['GET /api/logout'] })).calls, ['BLOCKED GET /api/logout']);
+  assert.deepEqual(classifyClick(r({ anchor: '#notes' })), { outcome: 'changes', reason: 'scrolls to #notes' });
+});
+
+test('a redirect off the site is a low finding naming the target; a loop is a bug; neither is a missing title or a broken route', () => {
+  const pages = [page('/', { links: links([['Partner', '/out']], false) }), page('/out', { status: 302, title: '', h1: [], blockedRedirect: { to: 'https://other.example/landing', reason: 'another site' } }),
+    page('/spin', { status: 302, title: '', h1: [], via: 'click', blockedRedirect: { to: '/spin', reason: 'too many redirects' } }), page('/quit', { status: 302, title: '', h1: [], blockedRedirect: { to: '/logout', reason: 'a destructive-looking URL' } })];
+  const f = analyze({ pages, settleMs: 1200 });
+  const off = f.find(x => x.type === 'offsite-redirect');
+  assert.equal(off.severity, 'low'); assert.match(off.title, /\/out redirects to another site: https:\/\/other\.example\/landing/); assert.match(off.evidence, /nothing was requested there/);
+  assert.equal(f.find(x => x.type === 'redirect-loop').severity, 'medium');
+  assert.deepEqual(f.map(x => x.type).sort(), ['offsite-redirect', 'redirect-loop'], 'no missing-title, missing-h1, route-error or broken-link for a refused redirect');
+  const dead = analyze({ pages: [page('/', { controls: [{ kind: 'button', label: 'Export', selector: '#export', outcome: 'dead' }] })], settleMs: 1200 });
+  assert.match(dead[0].evidence, /within 1200 ms/, 'the evidence names the settle time that was used');
 });
 
 const page = (path, over = {}) => ({ url: `${O}${path}`, path, pathname: path.split('#')[0], route: routeTemplate(`${O}${path}`), status: 200, via: 'link', title: `${path} · Demo`, h1: ['Heading'], screenshot: `screens/${path.replace(/\W/g, '') || 'home'}.jpg`, regions: [], links: [], controls: [], probe: [], consoleErrors: [], pageErrors: [], failed: [], ...over });
@@ -159,6 +221,7 @@ test('only local sites are crawled unless --allow-remote, checked before any bro
   assertLocalTarget('https://staging.example/', true, m => warnings.push(m));
   assert.match(warnings[0], /WARNING --allow-remote.*staging\.example.*Never point it at production/s);
   await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', maxPages: 0, playwright }), /--max-pages must be a whole number from 1/);
+  await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', settleMs: 5, playwright }), /--settle-ms must be a whole number from 100 to 10000/);
   await assert.rejects(crawlSite({ startUrl: 'http://localhost:1/', out: 'unused', storageState: '/nonexistent/auth.json', playwright }), /not a readable Playwright storage-state/);
 });
 
@@ -182,6 +245,26 @@ test('crawl login saves the session the person created, mode 0600, and never pri
     assert.ok(![msg, ...said].join('\n').includes('SECRET-COOKIE-123'), 'the cookie value is never printed');
     assert.match(msg, /never commit it.*\.gitignore/s);
     await assert.rejects(crawlLogin({ url: 'https://prod.example/login', save: file, playwright, input }), /not a local address/);
+  } finally { await cleanup(dir); }
+});
+
+test('crawl login without a terminal never saves at once: it waits for the sign-in, or saves nothing and says why', async () => {
+  const dir = await tmpDir(), file = join(dir, 'auth.json'), said = [];
+  try {
+    const state = { cookies: [{ name: 'sid', value: 'x', domain: 'localhost', path: '/' }], origins: [] };
+    const browserWith = waitForURL => ({ chromium: { launch: async () => ({ on() {}, close: async () => {}, newContext: async () => ({ newPage: async () => ({ goto: async () => {}, url: () => 'http://localhost:3000/login', waitForURL }), storageState: async () => state }) }) } });
+    const closedInput = () => { const input = new PassThrough(); input.end(); return input; };
+    // The sign-in never happens: nothing is written.
+    await assert.rejects(crawlLogin({ url: 'http://localhost:3000/login', save: file, playwright: browserWith(async () => { throw new Error('Timeout'); }), input: closedInput(), waitMs: 50, say: m => said.push(m) }), /Nothing was saved.*no terminal/s);
+    await assert.rejects(stat(file), /ENOENT/);
+    assert.match(said.join('\n'), /No terminal input is available/);
+    // The browser leaves the sign-in page: the session is saved then.
+    let left = false, asked;
+    const msg = await crawlLogin({ url: 'http://localhost:3000/login', save: file, input: closedInput(), say: () => {},
+      playwright: browserWith(async predicate => { asked = [predicate('http://localhost:3000/login/'), predicate('http://localhost:3000/login?next=%2F'), predicate('http://localhost:3000/dashboard')]; left = true; }) });
+    assert.deepEqual(asked, [false, false, true], 'only a different page counts as signed in');
+    assert.ok(left); assert.match(msg, /Saved the signed-in session/);
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), state);
   } finally { await cleanup(dir); }
 });
 

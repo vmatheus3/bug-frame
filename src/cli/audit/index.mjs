@@ -7,7 +7,7 @@ import { CliError } from '../commands.mjs';
 import { createFileStorage } from '../../server/storage-fs.mjs';
 import { MAX_ATTACHMENT_BYTES, text } from '../../server/util.mjs';
 import { EVIDENCE_DIR, cleanupAllSync, createBlindWorkspace } from './blind.mjs';
-import { parseViewports, probePage, redactUrl } from './probe.mjs';
+import { DEFAULT_SETTLE_MS, parseViewports, probePage, redactUrl } from './probe.mjs';
 import { probeMarkdown, summaryNote, unfence, validateAuditMarkdown } from './report.mjs';
 import { killAllChildren, onPath, runAuditor } from './runner.mjs';
 
@@ -56,7 +56,7 @@ function auditJson(res) {
  * One audit. Builds the blind workspace, probes, runs the auditor, validates its report and falls back to the
  * probe-only report when it is unusable (degraded). With `out`, writes audit.md, audit.json and the evidence there.
  */
-export async function auditOnce({ url, project, viewports, agent = 'none', agentCmd, model, click = true, timeoutMs = 900_000, keep = false, out, tmpRoot, exclude = [], allowRemote = false, signal, probe = probePage, log = () => {}, warn = m => console.error(m) }) {
+export async function auditOnce({ url, project, viewports, agent = 'none', agentCmd, model, click = true, settleMs = DEFAULT_SETTLE_MS, timeoutMs = 900_000, keep = false, out, tmpRoot, exclude = [], allowRemote = false, signal, probe = probePage, log = () => {}, warn = m => console.error(m) }) {
   if (!project) throw new CliError('audit needs --project <the folder of the code behind this page>.');
   try { new URL(url); } catch { throw new CliError('Give the page URL to audit, e.g. http://localhost:3000/settings'); }
   if (!isLocalUrl(url)) {
@@ -67,7 +67,7 @@ export async function auditOnce({ url, project, viewports, agent = 'none', agent
   const ws = await createBlindWorkspace({ project, tmpRoot, exclude: [...exclude, out] });
   try {
     log(`blind copy: ${ws.manifest.copiedFiles} files, ${ws.manifest.excludedInstructions.length} instruction files left out`);
-    const p = await probe({ url, viewports: vps, click, outDir: ws.evidenceDir, evidencePrefix: EVIDENCE_DIR, project, signal, log });
+    const p = await probe({ url, viewports: vps, click, settleMs, outDir: ws.evidenceDir, evidencePrefix: EVIDENCE_DIR, project, signal, log });
     await writeFile(join(ws.evidenceDir, 'manifest.json'), JSON.stringify(ws.manifest, null, 2));
     const task = taskText(p); await writeFile(join(ws.evidenceDir, 'AUDIT_TASK.md'), task);
     const res = { markdown: probeMarkdown(p), degraded: false, validation: null, rawOutput: null, probe: p, manifest: ws.manifest, agent, model, workspace: keep ? ws.dir : null };
@@ -164,6 +164,8 @@ export async function auditCommand(url, v, dir, { checkBlind } = {}) {
   }
   const timeoutMs = v.timeout === undefined ? 900_000 : Number(v.timeout);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 7_200_000) throw new CliError('--timeout is the auditor time limit in milliseconds (10000–7200000).');
+  const settleMs = v['settle-ms'] === undefined ? DEFAULT_SETTLE_MS : Number(v['settle-ms']);
+  if (!Number.isInteger(settleMs) || settleMs < 100 || settleMs > 10_000) throw new CliError('--settle-ms is how long a click gets to show an effect, in milliseconds (100–10000).');
   const agent = chooseAgent({ agent: v.agent, agentCmd: v['agent-cmd'] });
   const log = m => console.error(`[audit] ${m}`);
   // First Ctrl+C (or SIGTERM): kill the running auditor's process group, stop the probe, remove the blind copy, then exit.
@@ -174,7 +176,7 @@ export async function auditCommand(url, v, dir, { checkBlind } = {}) {
     log('stopping: ending the auditor and removing the blind copy (Ctrl+C again to force)');
     controller.abort();
   };
-  const common = { project: v.project, viewports: parseViewports(v.viewports), agent, agentCmd: v['agent-cmd'], model: v.model, click: !v['no-click'], timeoutMs, keep: v.keep, allowRemote: v['allow-remote'],
+  const common = { project: v.project, viewports: parseViewports(v.viewports), agent, agentCmd: v['agent-cmd'], model: v.model, click: !v['no-click'], settleMs, timeoutMs, keep: v.keep, allowRemote: v['allow-remote'],
     exclude: [dir, v.out], signal: controller.signal, log };
   if (v.watch && url) throw new CliError('--watch takes no URL: it reads page-analysis requests from --dir.');
   if (v.watch && !v.project) throw new CliError('audit --watch needs --project <the folder of the code behind the pages>.');

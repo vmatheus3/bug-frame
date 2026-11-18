@@ -7,14 +7,14 @@ const md = s => one(s).replace(/([|`<>])/g, '\\$1');
 const code = s => '`' + one(s).replace(/`/g, "'").replace(/</g, '&lt;').replace(/>/g, '&gt;') + '`';
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-const TYPE_LABEL = { 'dead-control': 'Dead control', 'dead-form': 'Form does nothing', 'click-error': 'Error on click', 'broken-link': 'Broken link', 'route-error': 'Route fails', 'orphan-route': 'Orphan page',
+const TYPE_LABEL = { 'dead-control': 'Dead control', 'dead-form': 'Form does nothing', 'click-error': 'Error on click', 'broken-link': 'Broken link', 'route-error': 'Route fails', 'offsite-redirect': 'Redirect leaves the site', 'redirect-loop': 'Redirect loop', 'orphan-route': 'Orphan page',
   'sitemap-broken': 'Broken sitemap entry', 'nav-inconsistent': 'Navigation differs', 'label-multiple-destinations': 'Same label, different places', 'destination-multiple-labels': 'Same place, different labels',
   'action-inconsistent': 'Same action, different wiring', 'missing-title': 'Missing title', 'missing-h1': 'Missing h1', 'duplicate-title': 'Duplicate title', 'repeated-console-error': 'Repeated error',
   'console-error': 'Console error', 'page-error': 'Uncaught error', 'failing-endpoint': 'Failing endpoint', 'stuck-loading': 'Stuck loading', 'mixed-language': 'Mixed languages',
   'horizontal-overflow': 'Sideways overflow', 'clipped-text': 'Clipped text', offscreen: 'Offscreen control', contrast: 'Low contrast', 'broken-image': 'Broken image', 'missing-alt': 'Missing alt',
   'unnamed-control': 'Unnamed control', 'small-tap-target': 'Small tap target', overlap: 'Overlapping controls', misaligned: 'Misaligned icon' };
 export const typeLabel = t => TYPE_LABEL[t] ?? t;
-const WIRING = new Set(['dead-control', 'dead-form', 'click-error', 'broken-link', 'route-error', 'orphan-route', 'sitemap-broken', 'nav-inconsistent', 'label-multiple-destinations', 'destination-multiple-labels', 'action-inconsistent', 'failing-endpoint', 'repeated-console-error', 'stuck-loading']);
+const WIRING = new Set(['dead-control', 'dead-form', 'click-error', 'broken-link', 'route-error', 'offsite-redirect', 'redirect-loop', 'orphan-route', 'sitemap-broken', 'nav-inconsistent', 'label-multiple-destinations', 'destination-multiple-labels', 'action-inconsistent', 'failing-endpoint', 'repeated-console-error', 'stuck-loading']);
 const target = e => e.outcome === 'calls-backend' || e.calls?.length ? (e.calls ?? []).join(', ') : e.to ?? e.reason ?? '';
 
 /** The agent-ready report. */
@@ -36,7 +36,7 @@ export function crawlMarkdown(c) {
   }
   const dead = c.edges.filter(e => e.outcome === 'dead' && !e.reused);
   o.push('## Dead controls', '', dead.length ? '| Page | Control | Selector | Why |' : 'None.', ...(dead.length ? ['|---|---|---|---|'] : []), ...dead.map(e => `| ${md(e.page)} | ${md(e.label)} | ${md(e.selector)} | ${md(e.reason ?? 'nothing happened')} |`), '');
-  const broken = f.filter(x => x.type === 'broken-link' || x.type === 'route-error' || x.type === 'sitemap-broken');
+  const broken = f.filter(x => ['broken-link', 'route-error', 'sitemap-broken', 'offsite-redirect', 'redirect-loop'].includes(x.type));
   o.push('## Broken links and routes', '', ...(broken.length ? broken.map(x => `- ${x.id}: ${md(x.title)} — ${md(x.evidence)}`) : ['None.']), '');
   const inc = f.filter(x => ['nav-inconsistent', 'label-multiple-destinations', 'destination-multiple-labels', 'action-inconsistent', 'duplicate-title', 'orphan-route'].includes(x.type));
   o.push('## Inconsistencies', '', ...(inc.length ? inc.map(x => `- ${x.id}: ${md(x.title)} — ${md(x.evidence)}`) : ['None.']), '');
@@ -47,7 +47,7 @@ export function crawlMarkdown(c) {
   o.push('', '## Pages', '');
   for (const p of c.pages) {
     const mine = f.filter(x => x.pages.includes(p.path)).map(x => x.id);
-    o.push(`### ${md(p.path)}`, `- Route: ${code(p.route)} · status ${p.status ?? p.error ?? '-'}${p.redirectedTo ? ` → redirected to ${code(p.redirectedTo)}` : ''} · reached by ${p.via}${p.from ? ` from ${code(p.from)}` : ''}`,
+    o.push(`### ${md(p.path)}`, `- Route: ${code(p.route)} · status ${p.status ?? p.error ?? '-'}${p.redirectedTo ? ` → redirected to ${code(p.redirectedTo)}` : ''}${p.blockedRedirect ? ` → redirect to ${p.blockedRedirect.reason} not followed: ${code(p.blockedRedirect.to)}` : ''} · reached by ${p.via}${p.from ? ` from ${code(p.from)}` : ''}`,
       `- Title: ${md(p.title) || '(none)'} · h1: ${p.h1.map(md).join(' / ') || '(none)'}`, `- Links: ${p.links} · controls: ${p.controls.filter(x => x.kind === 'button').length} (${p.controls.filter(x => x.outcome === 'skipped').length} skipped)`,
       `- Findings: ${mine.join(', ') || 'none'}${p.screenshot ? ` · screenshot ${code(p.screenshot)}` : ''}`, '');
   }
@@ -100,7 +100,7 @@ ${x.selector ? `<p>Element: <code>${esc(x.selector)}</code></p>` : ''}<p>${esc(x
   const pageCard = p => {
     const edges = c.edges.filter(e => e.page === p.path), shown = edges.filter(e => e.kind === 'button').concat(edges.filter(e => e.kind === 'link')), first = shown.slice(0, 8), rest = shown.slice(8);
     const bad = p.status === null || p.status >= 400;
-    return `<section class="page">${img(p.screenshot, `Screenshot of ${p.path}`).replace('class="thumb" ', '')}<div class="head"><b>${esc(p.path)}</b><span class="status${bad ? ' bad' : ''}">${esc(p.status ?? 'failed')}</span><small>${esc(p.title || '(no title)')}${p.route !== p.path ? ` · route <code>${esc(p.route)}</code>` : ''}${p.redirectedTo ? ` · redirects to ${esc(p.redirectedTo)}` : ''}</small></div>
+    return `<section class="page">${img(p.screenshot, `Screenshot of ${p.path}`).replace('class="thumb" ', '')}<div class="head"><b>${esc(p.path)}</b><span class="status${bad ? ' bad' : ''}">${esc(p.status ?? 'failed')}</span><small>${esc(p.title || '(no title)')}${p.route !== p.path ? ` · route <code>${esc(p.route)}</code>` : ''}${p.redirectedTo ? ` · redirects to ${esc(p.redirectedTo)}` : ''}${p.blockedRedirect ? ` · redirect to ${esc(p.blockedRedirect.reason)} not followed: ${esc(p.blockedRedirect.to)}` : ''}</small></div>
 <ul class="wires">${first.map(wire).join('')}</ul>${rest.length ? `<details><summary>${rest.length} more</summary><ul class="wires">${rest.map(wire).join('')}</ul></details>` : ''}</section>`;
   };
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

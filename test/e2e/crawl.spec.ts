@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SESSION_COOKIE, startCrawlSite } from './fixtures/crawl-site/server.mjs';
+import { startHostileSite } from './fixtures/crawl-site/hostile.mjs';
 
 // The whole-site crawl runs against a CRM-like fixture with planted wiring problems. The fixture records every request,
 // so the test proves that no write, destructive call, sign-out or WebSocket ever reached it.
@@ -69,4 +70,87 @@ test('bugframe crawl maps the whole site, finds every planted problem and never 
   expect(md).toContain('## Wiring map');
   expect(md).toMatch(/\| \/ \| Save \| button \| calls-backend \| POST \/api\/save \|/);
   for (const p of crawl.pages) if (p.screenshot) expect(existsSync(join(out, p.screenshot))).toBe(true);
+});
+
+// The hostile fixture tries every way around the guard. Its two servers record what reached them.
+test.describe('crawl guard against a hostile site', () => {
+  type Hostile = Awaited<ReturnType<typeof startHostileSite>>;
+  type Edge = { page: string; label: string; outcome: string; calls?: string[]; reason?: string; to?: string; kind: string };
+  let hostile: Hostile, dir = '';
+  const crawl = (args: string[]) => new Promise<{ code: number; stdout: string; stderr: string }>(r => execFile(process.execPath, ['src/cli/bin.mjs', 'crawl', ...args], { timeout: 220_000 },
+    (err, stdout, stderr) => r({ code: err ? Number((err as { code?: number }).code) : 0, stdout, stderr })));
+  test.beforeAll(async () => { hostile = await startHostileSite(); dir = mkdtempSync(join(tmpdir(), 'bugframe-e2e-hostile-')); });
+  test.afterAll(async () => { await hostile.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  test('workers, shared workers and iframes cannot open a socket or send a write; redirects never leave the site; the session survives', async () => {
+    test.setTimeout(240_000);
+    const out = join(dir, 'out');
+    const { stdout } = await crawl([`${hostile.base}/`, '--out', out, '--viewports', '1280x800', '--max-pages', '30']);
+    expect(stdout).toContain('crawl.html');
+    const data = JSON.parse(readFileSync(join(out, 'crawl.json'), 'utf8'));
+    const requested = (p: string) => hostile.seen.some(r => r.path === p);
+    const edge = (page: string, label: string) => data.edges.find((e: Edge) => e.page === page && e.label === label);
+    const blocked: { method: string; url: string }[] = data.blockedRequests;
+
+    // 1. No WebSocket from a page, an iframe, a worker, a module worker, a blob worker or a SharedWorker; no write at all.
+    expect(hostile.sockets).toEqual([]);
+    expect(hostile.seen.filter(r => r.method !== 'GET' && r.method !== 'HEAD')).toEqual([]);
+    for (const ws of ['/worker-ws', '/imported-ws', '/module-ws', '/module-dep-ws', '/blob-ws', '/frame-ws']) expect(blocked, ws).toContainEqual({ method: 'WEBSOCKET', url: ws });
+    expect(blocked).toContainEqual({ method: 'POST', url: '/api/worker-write' });
+    expect(blocked).toContainEqual({ method: 'SHAREDWORKER', url: '/shared.js' });
+    // A write the guard blocked rejects in the page; that "Failed to fetch" is the guard's doing, not an error of the click.
+    expect(edge('/', 'Sync now')).toMatchObject({ outcome: 'calls-backend', calls: ['POST /api/sync'] });
+    expect(requested('/shared.js')).toBe(false); // a SharedWorker's requests cannot be guarded, so it never starts
+    expect(requested('/nested.js')).toBe(false); // nor can a worker started by a worker
+    // The guarded dedicated worker still runs: it answered the page (strict mode and its own query string intact).
+    expect(edge('/workers', 'Ask the worker').outcome).toBe('changes');
+
+    // 2. Redirects that leave the site are not followed, from a link, a click or a page load; the report names the target.
+    expect(hostile.otherSeen).toEqual([]);
+    const off = data.findings.filter((f: { type: string }) => f.type === 'offsite-redirect');
+    expect(off.map((f: { title: string }) => f.title).join('\n')).toContain(`${hostile.otherBase}/landing`);
+    expect(off.map((f: { title: string }) => f.title).join('\n')).toContain(`${hostile.otherBase}/clicked`);
+    expect(JSON.stringify(data.pages)).not.toContain('"redirectedTo":"/landing'); // never shown as a local path
+    // A redirect that stays on the site still works, by page load and by click.
+    expect(data.pages.find((p: { path: string }) => p.path === '/hop')).toMatchObject({ redirectedTo: '/landed' });
+    expect(data.pages.find((p: { path: string }) => p.path === '/landed')).toMatchObject({ status: 200 });
+    expect(edge('/', 'Open moved page')).toMatchObject({ outcome: 'navigates', to: '/landed' });
+    expect(edge('/', 'Open partner').outcome).toBe('navigates');
+    expect(edge('/', 'Open partner').reason).toContain(`${hostile.otherBase}/clicked`);
+
+    // 3. Session-ending controls: "Log off", a Portuguese label, a sign-out link with a harmless URL, and a click
+    //    that fires GET /api/logout are never clicked, crawled or sent.
+    for (const p of ['/logoff', '/session/end', '/bye', '/api/logout']) expect(requested(p), p).toBe(false);
+    expect(edge('/', 'Log off')).toMatchObject({ outcome: 'skipped', reason: 'destructive' });
+    expect(edge('/', 'Encerrar sessão')).toMatchObject({ outcome: 'skipped', reason: 'destructive' });
+    expect(edge('/', 'Switch workspace').calls?.join()).toContain('GET /api/logout');
+    expect(data.pages.some((p: { path: string }) => ['/logoff', '/bye', '/session/end'].includes(p.path))).toBe(false);
+
+    // 4. A dead href="#" link is dead, not "navigates to this page"; a working in-page anchor is not flagged.
+    expect(edge('/', 'Hash dead')).toMatchObject({ kind: 'button', outcome: 'dead' });
+    expect(data.findings.some((f: { type: string; selector: string }) => f.type === 'dead-control' && f.selector === '#hash-dead')).toBe(true);
+    expect(data.findings.some((f: { selector: string }) => f.selector === '#to-notes')).toBe(false);
+
+    // 5. On a page that keeps polling and ticking, a handler-less button is "unknown", not "calls-backend"; a real one is found.
+    expect(edge('/poll', 'Archive').outcome).toBe('unknown');
+    expect(edge('/poll', 'Archive').reason).toMatch(/keeps changing on its own/);
+    expect(edge('/poll', 'Filters').outcome).toBe('opens');
+    expect(data.findings.some((f: { selector: string }) => f.selector === '#archive')).toBe(false);
+
+    // 6. The endless calendar is one route: two months opened, the rest counted.
+    expect(new Set(hostile.seen.filter(r => r.path.startsWith('/cal/')).map(r => r.path)).size).toBeLessThanOrEqual(2);
+    expect(data.pages.filter((p: { route: string }) => p.route === '/cal/:date')).toHaveLength(2);
+  });
+
+  test('a start URL that redirects to another site is refused before anything is fetched there', async () => {
+    test.setTimeout(120_000);
+    hostile.otherSeen.length = 0;
+    const out = join(dir, 'out-start');
+    const { stdout } = await crawl([`${hostile.base}/out`, '--out', out, '--viewports', '1280x800', '--no-click']);
+    expect(hostile.otherSeen).toEqual([]);
+    const data = JSON.parse(readFileSync(join(out, 'crawl.json'), 'utf8'));
+    expect(data.findings.map((f: { type: string }) => f.type)).toContain('offsite-redirect');
+    expect(data.pages[0]).toMatchObject({ path: '/out', status: 302 });
+    expect(stdout).toContain('crawl.html');
+  });
 });

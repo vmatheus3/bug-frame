@@ -17,17 +17,21 @@ export function classifyClick(rec) {
   if (o.startsWith('skipped')) return { outcome: 'skipped', reason: o.replace(/^skipped:\s*/, '') };
   if (o === 'not found in a fresh page' || o === 'probe error') return { outcome: 'unknown', reason: rec.error ? `${o}: ${rec.error}` : o };
   if (o === 'could not click') return { outcome: 'dead', reason: 'the control could not be clicked (covered, disabled or detached)' };
+  if (o.startsWith('unclear')) return { outcome: 'unknown', reason: 'the page keeps changing on its own (polling or timers), so a click with no effect of its own cannot be told apart from a dead one' };
   const e = rec.effects ?? {};
   const writes = (e.blockedRequests ?? []).map(b => String(b).replace(/^would have sent /, ''));
-  const navBlocked = writes.find(w => w.startsWith('NAVIGATE '));
-  const calls = [...writes.filter(w => !w.startsWith('NAVIGATE ')), ...(e.calls ?? [])];
+  const navBlocked = writes.find(w => w.startsWith('NAVIGATE ')), redirectBlocked = writes.find(w => w.startsWith('REDIRECT '));
+  // A blocked GET is also in the list of requests the click fired: keep the entry that says it was blocked.
+  const sent = writes.filter(w => !/^(NAVIGATE|REDIRECT) /.test(w)), calls = uniq([...sent, ...(e.calls ?? []).filter(c => !sent.includes(`BLOCKED ${c}`))]);
   if (e.navigatedUrl) return { outcome: 'navigates', to: e.navigatedUrl, ...(calls.length ? { calls } : {}) };
+  if (redirectBlocked) return { outcome: 'navigates', to: null, reason: `redirect not followed by the crawl guard: ${redirectBlocked.slice(9)}` };
   if (navBlocked) return { outcome: 'navigates', to: null, reason: `navigation blocked by the crawl guard: ${navBlocked.slice(9)}` };
   const errors = [...(e.pageErrors ?? []), ...(e.consoleErrors ?? []), ...(e.failedRequests ?? [])];
   if (errors.length) return { outcome: 'error', reason: errors[0], ...(calls.length ? { calls } : {}) };
   if (calls.length) return { outcome: 'calls-backend', calls };
   if (e.opened || e.popup || e.dialog) return { outcome: 'opens', reason: e.popup ? 'popup window' : e.dialog ? 'browser dialog' : 'dialog, menu or panel' };
   if (e.domChanged || e.focusMoved) return { outcome: 'changes' };
+  if (e.anchor) return { outcome: 'changes', reason: `scrolls to ${e.anchor}` };
   if (e.formSubmitIntercepted) return { outcome: 'dead', reason: 'the form was submitted, but it has no action and no handler did anything' };
   return { outcome: 'dead' };
 }
@@ -38,6 +42,8 @@ const CRAWL_FIXES = {
   'click-error': 'Fix the error this click raises (see the evidence) and add a test that clicks it.',
   'broken-link': 'Point the link at a page that exists, or remove it; check the route table for a renamed path.',
   'route-error': 'Make this route render (fix the server error or add the page), or stop linking to it.',
+  'offsite-redirect': 'Check that this redirect is meant to leave the site; if it is, link to the target directly and mark it as an external link.',
+  'redirect-loop': 'Break the redirect chain: make the route answer with a page, or redirect straight to the final address.',
   'orphan-route': 'Link to this page from the navigation or a related page, or remove it from the sitemap if it is retired.',
   'sitemap-broken': 'Remove the URL from sitemap.xml or restore the page.',
   'nav-inconsistent': 'Render the navigation from one shared component and one list of items on every page.',
@@ -67,9 +73,9 @@ const errorKey = m => String(m).split('\n')[0].replace(/https?:\/\/[^\s'")]+/g, 
  * Every whole-site check. `pages` are crawl page records, `linkStatus` maps a normalised URL to { status, error,
  * skipped } for link targets that were not crawled, `sitemap` lists normalised sitemap URLs.
  */
-export function analyze({ pages, linkStatus = new Map(), sitemap = [] }) {
+export function analyze({ pages, linkStatus = new Map(), sitemap = [], settleMs = 700 }) {
   const out = [];
-  const ok = pages.filter(p => p.status !== null && p.status < 400 && !p.redirectedTo);
+  const ok = pages.filter(p => p.status !== null && p.status < 400 && !p.redirectedTo && !p.blockedRedirect);
   const add = f => out.push({ selector: '', screenshot: null, ...f, routes: uniq(f.routes ?? []), pages: uniq(f.pages ?? []).slice(0, 50), fix: fixFor(f.type) });
   const pageOf = new Map(pages.map(p => [p.url, p]));
   const statusOf = url => { const p = pageOf.get(url); if (p) return { status: p.status, error: p.error }; return linkStatus.get(url) ?? null; };
@@ -77,12 +83,19 @@ export function analyze({ pages, linkStatus = new Map(), sitemap = [] }) {
   // 1. Controls: dead, dead forms, errors on click.
   for (const p of pages) for (const c of p.controls ?? []) {
     if (c.reused) continue;
-    if (c.outcome === 'dead') add({ type: c.submit ? 'dead-form' : 'dead-control', severity: 'high', title: c.submit ? `Form submit "${c.label || c.selector}" does nothing` : `"${c.label || c.selector}" does nothing when clicked`, routes: [p.route], pages: [p.path], selector: c.selector, evidence: c.reason ?? 'click caused no navigation, request, dialog, DOM change, focus change or console output within 700 ms', screenshot: c.screenshot ?? p.screenshot });
+    if (c.outcome === 'dead') add({ type: c.submit ? 'dead-form' : 'dead-control', severity: 'high', title: c.submit ? `Form submit "${c.label || c.selector}" does nothing` : `"${c.label || c.selector}" does nothing when clicked`, routes: [p.route], pages: [p.path], selector: c.selector, evidence: c.reason ?? `click caused no navigation, request, dialog, DOM change, focus change or console output within ${settleMs} ms`, screenshot: c.screenshot ?? p.screenshot });
     if (c.outcome === 'error') add({ type: 'click-error', severity: 'high', title: `Clicking "${c.label || c.selector}" raises an error`, routes: [p.route], pages: [p.path], selector: c.selector, evidence: c.reason, screenshot: c.screenshot ?? p.screenshot });
   }
 
   // 2. Routes that fail to load, and links (any page) to routes that fail. Links from navigation regions are high.
   // A 404 reached by an ordinary link is reported once, as that broken link (below); here: start, clicks, redirects.
+  // A redirect the guard refused: off the site (worth knowing, often intended) or going round in circles (a bug).
+  for (const p of pages) if (p.blockedRedirect) {
+    const { to, reason } = p.blockedRedirect, offsite = reason === 'another site';
+    if (!offsite && reason !== 'too many redirects') continue; // a destructive target is listed under "never opened"
+    add({ type: offsite ? 'offsite-redirect' : 'redirect-loop', severity: offsite ? 'low' : 'medium', title: offsite ? `${p.path} redirects to another site: ${to}` : `${p.path} redirects more than 5 times`, routes: [p.route], pages: [p.path],
+      evidence: `GET ${p.path} → ${p.status}, Location ${to}; ${offsite ? 'the crawl never follows a redirect off the site, so nothing was requested there' : 'the chain was stopped'}; reached via ${p.via}${p.from ? ` from ${p.from}` : ''}` });
+  }
   for (const p of pages) if ((p.status === null || p.status >= 400) && !['link', 'sitemap'].includes(p.via)) add({ type: 'route-error', severity: p.status >= 500 || p.status === null ? 'high' : 'medium', title: `${p.path} answers ${p.status ?? p.error ?? 'nothing'}`, routes: [p.route], pages: [p.path], evidence: `GET ${p.path} → ${p.status ?? p.error}; reached via ${p.via}${p.from ? ` from ${p.from}` : ''}` });
   const linkEdges = ok.flatMap(p => (p.links ?? []).map(l => ({ ...l, page: p })));
   for (const [url, edges] of groupBy(linkEdges, l => l.url)) {

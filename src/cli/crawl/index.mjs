@@ -6,12 +6,12 @@ import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CliError } from '../commands.mjs';
 import { isLocalUrl, stamp } from '../audit/index.mjs';
-import { CONTEXT, checkLink, clickOne, guard, isDestructive, load, loadPlaywright, pageChecks, parseViewports, redactUrl, watch } from '../audit/probe.mjs';
+import { CONTEXT, DEFAULT_SETTLE_MS, checkLink, clickOne, guard, isDestructive, load, loadPlaywright, pageChecks, parseViewports, redactUrl, watch } from '../audit/probe.mjs';
 import { SEVERITIES, analyze, classifyClick, languageMix } from './detect.mjs';
 import { crawlHtml, crawlMarkdown } from './report.mjs';
 import { createFrontier, isHashRoute, normalizeUrl, routeTemplate, shortUrl } from './urls.mjs';
 
-export const DEFAULTS = { maxPages: 200, maxDepth: 6, viewports: '390x844,1440x900', maxControls: 60, concurrency: 2, timeoutMs: 15_000, maxMinutes: 30, perTemplate: 2 };
+export const DEFAULTS = { maxPages: 200, maxDepth: 6, viewports: '390x844,1440x900', maxControls: 60, concurrency: 2, timeoutMs: 15_000, maxMinutes: 30, perTemplate: 2, settleMs: DEFAULT_SETTLE_MS, loginWaitMs: 600_000 };
 export const DEFAULT_AUTH_FILE = '.bugframe-auth.json';
 const PAUSE_MS = 150, MAX_LINK_CHECKS = 300, MAX_THUMBS = 150;
 
@@ -40,7 +40,7 @@ function collectPage() {
     counts[key] = (counts[key] ?? 0) + 1; if (counts[key] > 1) key += ` (${counts[key]})`;
     return { key, items: [...r.querySelectorAll(LINK)].map(a => ({ label: label(a), url: hrefOf(a) })).filter(i => i.url).slice(0, 80) };
   });
-  const links = [...document.querySelectorAll(LINK)].filter(a => !ui(a)).slice(0, 2000).map(a => ({ label: label(a), url: hrefOf(a), selector: sel(a), inNav: Boolean(a.closest('nav, [role=navigation]')) })).filter(l => l.url);
+  const links = [...document.querySelectorAll(LINK)].filter(a => !ui(a)).slice(0, 2000).map(a => ({ label: label(a), hint: clean(`${a.getAttribute('title') ?? ''} ${a.getAttribute('aria-label') ?? ''}`).slice(0, 160), url: hrefOf(a), selector: sel(a), inNav: Boolean(a.closest('nav, [role=navigation]')) })).filter(l => l.url);
   const h1 = [...document.querySelectorAll('h1')].filter(h => !ui(h) && h.getBoundingClientRect().height > 0).map(text).filter(Boolean).slice(0, 5);
   return { title: clean(document.title).slice(0, 200), h1, lang: document.documentElement.lang || '', regions, links, text: (document.body?.innerText ?? '').slice(0, 20_000) };
 }
@@ -91,7 +91,7 @@ async function readStorageState(file) {
 export async function crawlSite(o) {
   const opt = { ...DEFAULTS, include: [], exclude: [], click: true, allowRemote: false, log: () => {}, warn: m => console.error(m), ...o };
   assertLocalTarget(opt.startUrl, opt.allowRemote, opt.warn);
-  for (const [k, lo, hi] of [['maxPages', 1, 5000], ['maxDepth', 0, 50], ['maxControls', 0, 500], ['concurrency', 1, 8], ['timeoutMs', 1000, 300_000], ['maxMinutes', 1, 1440]])
+  for (const [k, lo, hi] of [['maxPages', 1, 5000], ['maxDepth', 0, 50], ['maxControls', 0, 500], ['concurrency', 1, 8], ['timeoutMs', 1000, 300_000], ['maxMinutes', 1, 1440], ['settleMs', 100, 10_000]])
     if (!Number.isInteger(opt[k]) || opt[k] < lo || opt[k] > hi) throw new CliError(`--${k.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`).replace('max-controls', 'max-controls-per-page').replace('timeout-ms', 'timeout')} must be a whole number from ${lo} to ${hi}.`);
   const viewports = Array.isArray(opt.viewports) ? opt.viewports : parseViewports(opt.viewports);
   const desktop = [...viewports].sort((a, b) => b.width - a.width)[0];
@@ -103,7 +103,7 @@ export async function crawlSite(o) {
   const frontier = createFrontier({ origin, maxPages: opt.maxPages, maxDepth: opt.maxDepth, include: opt.include, exclude: opt.exclude, perTemplate: opt.perTemplate });
   frontier.add(start, { depth: 0, via: 'start' });
   const crawl = { tool: 'bugframe crawl', origin: redactUrl(origin).replace(/\/$/, ''), start: shortUrl(redactUrl(start)), startedAt: new Date().toISOString(), partial: false, signedIn: Boolean(storageState),
-    limits: { maxPages: opt.maxPages, maxDepth: opt.maxDepth, perTemplate: opt.perTemplate, maxControlsPerPage: opt.click ? opt.maxControls : 0, timeoutMs: opt.timeoutMs, maxMinutes: opt.maxMinutes, viewports: viewports.map(v => v.name), include: opt.include, exclude: opt.exclude },
+    limits: { maxPages: opt.maxPages, maxDepth: opt.maxDepth, perTemplate: opt.perTemplate, maxControlsPerPage: opt.click ? opt.maxControls : 0, timeoutMs: opt.timeoutMs, settleMs: opt.settleMs, maxMinutes: opt.maxMinutes, viewports: viewports.map(v => v.name), include: opt.include, exclude: opt.exclude },
     sitemap: [], pages: [], findings: [], notes: [] };
   const pages = [], blockedAll = [], tests = new Map(), clickCounter = { n: 0 };
   let browser;
@@ -152,18 +152,8 @@ export async function crawlSite(o) {
     for (const w of workers) blockedAll.push(...w.blocked);
 
     // Link targets that were not crawled: one GET each through the guard, except routes already represented.
-    const linkStatus = new Map(), crawled = new Set(pages.map(p => p.url));
-    let checks = 0;
-    for (const target of new Set(pages.flatMap(p => p.links.map(l => l.url)))) {
-      if (crawled.has(target) || linkStatus.has(target)) continue;
-      const v = frontier.check(target, 0);
-      if (['offsite', 'invalid'].includes(v.status)) continue;
-      if (isDestructive(new URL(target).pathname + new URL(target).search)) { linkStatus.set(target, { status: null, skipped: 'destructive' }); continue; }
-      if (pages.some(p => p.route === routeTemplate(target) && p.status !== null && p.status < 400) && v.status !== 'excluded') { linkStatus.set(target, { status: null, skipped: 'same route as a crawled page' }); continue; }
-      if (isHashRoute(new URL(target).hash) || checks >= MAX_LINK_CHECKS || opt.signal?.aborted) { linkStatus.set(target, { status: null, skipped: checks >= MAX_LINK_CHECKS ? 'link-check limit' : 'not checked' }); continue; }
-      checks++;
-      try { linkStatus.set(target, await checkLink(request, target, origin)); } catch (e) { linkStatus.set(target, { status: null, error: String(e?.message ?? e).split('\n')[0].slice(0, 80) }); }
-    }
+    const linkStatus = await checkTargets({ pages, frontier, stopped, check: target => checkLink(request, target, origin) });
+    if (!crawl.partial && [...linkStatus.values()].some(v => v.skipped === 'stopped')) { crawl.partial = true; crawl.notes.push(opt.signal?.aborted ? 'Stopped before every link target was checked (Ctrl+C).' : `Stopped at the ${opt.maxMinutes}-minute limit (--max-minutes) before every link target was checked.`); }
 
     // Thumbnails for the HTML report, made in a separate context with no network at all.
     const thumbs = new Map(), thumbCtx = await browser.newContext({ offline: true, javaScriptEnabled: true });
@@ -173,7 +163,7 @@ export async function crawlSite(o) {
       for (const f of files) { try { const buf = await readFile(join(out, f)); thumbs.set(f, await tp.evaluate(downscale, `data:image/${f.endsWith('.png') ? 'png' : 'jpeg'};base64,${buf.toString('base64')}`)); } catch { /* skip that one */ } }
     } finally { await thumbCtx.close(); }
 
-    crawl.findings = analyze({ pages, linkStatus, sitemap: crawl.sitemap });
+    crawl.findings = analyze({ pages, linkStatus, sitemap: crawl.sitemap, settleMs: opt.settleMs });
     crawl.finishedAt = new Date().toISOString();
     const pub = toPublic(crawl, pages, frontier, blockedAll, linkStatus);
     await writeFile(join(out, 'crawl.json'), JSON.stringify(pub, null, 2));
@@ -181,6 +171,29 @@ export async function crawlSite(o) {
     await writeFile(join(out, 'crawl.html'), crawlHtml(pub, thumbs));
     return { ...pub, out };
   } finally { await browser.close(); }
+}
+
+/**
+ * One GET for every link target that was not crawled, through the guard's rules. Never checked: other sites,
+ * destructive URLs (by address or because their link is labelled so), routes a crawled page already represents and
+ * hash routes. Stops with the crawl (`stopped`: Ctrl+C or --max-minutes); what is left is marked, not fetched.
+ */
+export async function checkTargets({ pages, frontier, stopped, check, max = MAX_LINK_CHECKS }) {
+  const linkStatus = new Map(), crawled = new Set(pages.map(p => p.url));
+  let checks = 0;
+  for (const target of new Set(pages.flatMap(p => p.links.map(l => l.url)))) {
+    if (crawled.has(target) || linkStatus.has(target)) continue;
+    const v = frontier.check(target, 0);
+    if (['offsite', 'invalid'].includes(v.status)) continue;
+    if (v.status === 'destructive') { linkStatus.set(target, { status: null, skipped: 'destructive' }); continue; }
+    if (pages.some(p => p.route === routeTemplate(target) && p.status !== null && p.status < 400) && v.status !== 'excluded') { linkStatus.set(target, { status: null, skipped: 'same route as a crawled page' }); continue; }
+    if (isHashRoute(new URL(target).hash)) { linkStatus.set(target, { status: null, skipped: 'not checked' }); continue; }
+    if (stopped()) { linkStatus.set(target, { status: null, skipped: 'stopped' }); continue; }
+    if (checks >= max) { linkStatus.set(target, { status: null, skipped: 'link-check limit' }); continue; }
+    checks++;
+    try { linkStatus.set(target, await check(target)); } catch (e) { linkStatus.set(target, { status: null, error: String(e?.message ?? e).split('\n')[0].slice(0, 80) }); }
+  }
+  return linkStatus;
 }
 
 /** One page at every viewport, then its controls. */
@@ -192,7 +205,13 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
     const context = worker.contexts.get(vp.name), page = await context.newPage(), log = watch(page, origin), phone = vp.width < 600;
     try {
       let response; const t0 = Date.now();
-      try { response = await load(page, item.url, opt.timeoutMs); } catch (e) { if (vp === desktop) { rec.error = String(e?.message ?? e).split('\n')[0].slice(0, 160); return rec; } continue; }
+      try { response = await load(page, item.url, opt.timeoutMs); } catch (e) {
+        if (vp !== desktop) continue;
+        // A redirect the guard refused (another site, a destructive URL, a loop) is a fact about the page, not a load error.
+        if (e.blockedRedirect) { rec.status = e.blockedRedirect.status; rec.blockedRedirect = { to: e.blockedRedirect.to, reason: e.blockedRedirect.reason }; }
+        else rec.error = String(e?.message ?? e).split('\n')[0].slice(0, 160);
+        return rec;
+      }
       if (vp === desktop) {
         rec.status = response ? response.status() : null;
         const final = normalizeUrl(page.url());
@@ -211,7 +230,12 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
         Object.assign(rec, { title: c.title, h1: c.h1, lang: c.lang, languages: languageMix(c.text) });
         rec.regions = c.regions.map(r => ({ key: r.key, items: r.items.map(i => ({ label: i.label, url: normalizeUrl(i.url) })).filter(i => i.url && new URL(i.url).origin === origin) }));
         const seenLinks = new Set();
-        for (const l of c.links) { const url = normalizeUrl(l.url); if (!url || new URL(url).origin !== origin || url === item.url || seenLinks.has(url)) continue; seenLinks.add(url); rec.links.push({ label: l.label, url, selector: l.selector, inNav: l.inNav }); }
+        for (const l of c.links) {
+          const url = normalizeUrl(l.url); if (!url || new URL(url).origin !== origin || url === item.url || seenLinks.has(url)) continue; seenLinks.add(url);
+          // "Sign out" pointing at /bye: the label makes the address destructive too. It is never opened or fetched.
+          const destructive = isDestructive(`${l.label} ${l.hint}`); if (destructive) frontier.ban(url);
+          rec.links.push({ label: l.label, url, selector: l.selector, inNav: l.inNav, ...(destructive ? { destructive: true } : {}) });
+        }
         if (res) { const extra = await page.evaluate(enrich, res.candidates.map(x => x.selector)).catch(() => []); candidates = res.candidates.map((x, i) => ({ ...x, ...(extra[i] ?? {}) })); }
       }
       rec.consoleErrors.push(...log.console); rec.pageErrors.push(...log.pageErrors); rec.failed.push(...log.failed);
@@ -221,7 +245,7 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
   rec.failed = [...new Map(rec.failed.map(r => [`${r.method} ${r.url} ${r.status}`, r])).values()];
 
   // Same-origin links are followed, not clicked; buttons and script links are clicked one by one in a fresh page.
-  for (const l of rec.links) frontier.add(l.url, { depth: item.depth + 1, via: 'link', from: item.route });
+  for (const l of rec.links) if (!l.destructive) frontier.add(l.url, { depth: item.depth + 1, via: 'link', from: item.route });
   const context = worker.contexts.get(desktop.name);
   let clicked = 0;
   for (const c of candidates) {
@@ -240,7 +264,7 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
     if (clicked >= opt.maxControls) { rec.controls.push({ ...base, outcome: 'skipped', reason: 'per-page control limit' }); continue; }
     clicked++;
     const test = (async () => {
-      const r = await clickOne({ context, url: item.url, c, n: ++clickCounter.n, outDir: out, evidencePrefix: '.', origin, blocked: worker.blocked, vp: desktop, raw: [], timeout: opt.timeoutMs });
+      const r = await clickOne({ context, url: item.url, c, n: ++clickCounter.n, outDir: out, evidencePrefix: '.', origin, blocked: worker.blocked, vp: desktop, raw: [], timeout: opt.timeoutMs, settleMs: opt.settleMs });
       const cls = classifyClick(r), result = { ...cls, ...(r.screenshot ? { screenshot: r.screenshot.replace(/^\.\//, '') } : {}) };
       if (cls.to) { const url = normalizeUrl(cls.to, origin); if (url && new URL(url).origin === origin) { result.toUrl = url; result.to = routeTemplate(url); frontier.add(url, { depth: item.depth + 1, via: 'click', from: item.route }); } }
       return result;
@@ -265,11 +289,11 @@ function toPublic(crawl, pages, frontier, blocked, linkStatus) {
     skipped: { destructive: [...frontier.skipped.destructive].slice(0, 200), excluded: [...frontier.skipped.excluded].slice(0, 200), depth: [...frontier.skipped.depth].slice(0, 200), pagesCap: [...frontier.skipped.pages].slice(0, 200), offsite: frontier.skipped.offsite,
       template: [...frontier.skipped.template].map(([route, urls]) => ({ route, count: urls.size, examples: [...urls].slice(0, 3).map(u => shortUrl(redactUrl(u))) })) },
     blockedRequests: [...new Map(blocked.map(b => [`${b.method} ${b.url}`, b])).values()].slice(0, 200),
-    pages: pages.sort((a, b) => a.n - b.n).map((p, i) => ({ id: `p${i + 1}`, path: p.path, route: p.route, status: p.status, ...(p.error ? { error: p.error } : {}), ...(p.redirectedTo ? { redirectedTo: p.redirectedTo } : {}), title: p.title, h1: p.h1, lang: p.lang,
+    pages: pages.sort((a, b) => a.n - b.n).map((p, i) => ({ id: `p${i + 1}`, path: p.path, route: p.route, status: p.status, ...(p.error ? { error: p.error } : {}), ...(p.redirectedTo ? { redirectedTo: p.redirectedTo } : {}), ...(p.blockedRedirect ? { blockedRedirect: p.blockedRedirect } : {}), title: p.title, h1: p.h1, lang: p.lang,
       depth: p.depth, via: p.via, from: p.from, screenshot: p.screenshot, screenshots: p.screenshots, consoleErrors: p.consoleErrors, pageErrors: p.pageErrors, failedRequests: p.failed, stuckLoading: p.stuckLoading,
       links: p.links.length, controls: p.controls.map(({ toUrl, ...c }) => c) })),
     edges: pages.flatMap(p => [
-      ...[...new Map(p.links.map(l => [routeTemplate(l.url), l])).values()].map(l => ({ from: p.route, page: p.path, kind: 'link', label: l.label, selector: l.selector, ...(isDestructive(shortUrl(l.url)) ? { outcome: 'skipped', reason: `destructive link to ${shortUrl(redactUrl(l.url))}, never opened` } : { outcome: 'navigates', to: routeTemplate(l.url) }), status: statusByUrl.get(l.url) ?? linkStatus.get(l.url)?.status ?? null })),
+      ...[...new Map(p.links.map(l => [routeTemplate(l.url), l])).values()].map(l => ({ from: p.route, page: p.path, kind: 'link', label: l.label, selector: l.selector, ...(l.destructive || isDestructive(shortUrl(l.url)) ? { outcome: 'skipped', reason: `destructive link to ${shortUrl(redactUrl(l.url))}, never opened` } : { outcome: 'navigates', to: routeTemplate(l.url) }), status: statusByUrl.get(l.url) ?? linkStatus.get(l.url)?.status ?? null })),
       ...p.controls.filter(c => c.kind === 'button').map(c => ({ from: p.route, page: p.path, kind: 'button', label: c.label, selector: c.selector, outcome: c.outcome, ...(c.to ? { to: c.to } : {}), ...(c.calls ? { calls: c.calls } : {}), ...(c.reason ? { reason: c.reason } : {}), ...(c.reused ? { reused: true } : {}) })),
     ]),
   };
@@ -288,7 +312,7 @@ export function failsOn(findings, level) {
  * `bugframe crawl login <url> --save FILE`: open a visible browser, let the person sign in themself, then save the
  * Playwright storage state (cookies + local storage) with mode 0600. Bugframe never sees or types the password.
  */
-export async function crawlLogin({ url, save = DEFAULT_AUTH_FILE, allowRemote = false, playwright, project, input = process.stdin, say = m => console.error(m), warn = m => console.error(m) }) {
+export async function crawlLogin({ url, save = DEFAULT_AUTH_FILE, allowRemote = false, playwright, project, input = process.stdin, waitMs = DEFAULTS.loginWaitMs, say = m => console.error(m), warn = m => console.error(m) }) {
   assertLocalTarget(url, allowRemote, warn, 'crawl login on');
   const pw = playwright ?? await loadPlaywright(project);
   let browser; try { browser = await pw.chromium.launch({ headless: false }); } catch (e) { throw new CliError(`Could not open a browser window (${String(e?.message ?? e).split('\n')[0]}). Run: npx playwright install chromium`); }
@@ -298,8 +322,17 @@ export async function crawlLogin({ url, save = DEFAULT_AUTH_FILE, allowRemote = 
     say(`A browser window is open at ${redactUrl(url)}. Sign in there yourself (Bugframe never sees your password), then come back here and press Enter. Keep the window open until then.`);
     const closed = new Promise(r => browser.on?.('disconnected', () => r('closed')));
     const rl = createInterface({ input });
-    const answer = await Promise.race([new Promise(r => rl.once('line', () => r('enter'))), new Promise(r => rl.once('close', () => r('enter'))), closed]);
+    let answer = await Promise.race([new Promise(r => rl.once('line', () => r('enter'))), new Promise(r => rl.once('close', () => r('no-terminal'))), closed]);
     rl.close();
+    if (answer === 'no-terminal') {
+      // Nobody can press Enter (stdin is closed or piped). Saving at once would store a session that is not signed in,
+      // so wait until the browser has left the sign-in page, and say so; give up with a clear message otherwise.
+      const at = href => { try { const u = new URL(href); return u.origin + u.pathname.replace(/\/$/, ''); } catch { return String(href); } }, start = at(page.url?.() ?? url);
+      say(`No terminal input is available, so the session is saved as soon as the browser leaves the sign-in page (waiting up to ${Math.round(waitMs / 60_000) || 1} min).`);
+      answer = await Promise.race([closed, page.waitForURL(u => at(String(u)) !== start, { timeout: waitMs, waitUntil: 'load' }).then(() => 'signed-in', () => 'timeout')]);
+      if (answer === 'timeout') throw new CliError(`Nothing was saved: the browser was still on the sign-in page after ${Math.round(waitMs / 1000)} s and there is no terminal to confirm in. Run the command in a terminal and press Enter after signing in.`);
+      if (answer === 'signed-in') await sleep(1500); // let the session cookie land
+    }
     if (answer === 'closed') throw new CliError('The browser window was closed before the session was saved. Run the command again and press Enter here while the window is still open.');
     const state = await context.storageState(), file = resolve(save);
     await writeFile(file, JSON.stringify(state, null, 2), { mode: 0o600 }); await chmod(file, 0o600);
@@ -314,7 +347,7 @@ export async function crawlCommand(args, v, { summarize: summarizeFn } = {}) {
     if (!second) throw new CliError('Usage: bugframe crawl login <url> [--save .bugframe-auth.json] [--allow-remote]');
     return crawlLogin({ url: second, save: v.save, allowRemote: v['allow-remote'], project: v.project });
   }
-  if (!first) throw new CliError('Usage: bugframe crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]... [--storage-state FILE] [--no-click] [--summarize] (see bugframe --help).');
+  if (!first) throw new CliError('Usage: bugframe crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]... [--storage-state FILE] [--no-click] [--settle-ms 700] [--summarize] (see bugframe --help).');
   const int = (name, def) => { if (v[name] === undefined) return def; const n = Number(v[name]); if (!Number.isInteger(n)) throw new CliError(`--${name} must be a whole number.`); return n; };
   const failOn = v['fail-on'] ?? 'none'; failsOn([], failOn);
   if (v.model && !v.summarize) throw new CliError('--model only applies with --summarize.');
@@ -324,7 +357,7 @@ export async function crawlCommand(args, v, { summarize: summarizeFn } = {}) {
   try {
     const res = await crawlSite({ startUrl: first, out: v.out ?? `bugframe-crawl-${stamp()}`, maxPages: int('max-pages', DEFAULTS.maxPages), maxDepth: int('max-depth', DEFAULTS.maxDepth), include: v.include ?? [], exclude: v.exclude ?? [],
       viewports: v.viewports ?? DEFAULTS.viewports, storageState: v['storage-state'], click: !v['no-click'], maxControls: int('max-controls-per-page', DEFAULTS.maxControls), concurrency: int('concurrency', DEFAULTS.concurrency),
-      timeoutMs: int('timeout', DEFAULTS.timeoutMs), maxMinutes: int('max-minutes', DEFAULTS.maxMinutes), allowRemote: v['allow-remote'], project: v.project, signal: controller.signal, log: m => console.error(`[crawl] ${m}`) });
+      timeoutMs: int('timeout', DEFAULTS.timeoutMs), maxMinutes: int('max-minutes', DEFAULTS.maxMinutes), settleMs: int('settle-ms', DEFAULTS.settleMs), allowRemote: v['allow-remote'], project: v.project, signal: controller.signal, log: m => console.error(`[crawl] ${m}`) });
     const f = res.stats.findings, lines = [
       `Crawled ${res.stats.pages} page(s) (${res.stats.routes} route(s)), tested ${res.stats.controlsTested} control(s), skipped ${res.stats.controlsSkippedDestructive} destructive one(s)${res.partial ? ' (partial run)' : ''}.`,
       `Findings: ${f.high} high, ${f.medium} medium, ${f.low} low.`,

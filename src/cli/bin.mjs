@@ -34,7 +34,7 @@ Commands:
   reopen <id>
   import <report.zip>                  unpack a report downloaded from a backend-less page
   audit <url> --project FOLDER [--out DIR] [--viewports 390x844,768x1024,1280x800,1440x900]
-        [--agent claude|none | --agent-cmd "CMD"] [--model ID] [--no-click] [--timeout MS] [--keep]
+        [--agent claude|none | --agent-cmd "CMD"] [--model ID] [--no-click] [--settle-ms 700] [--timeout MS] [--keep]
         [--base-url http://localhost:3000] [--allow-remote]
                                        blind page analysis: browser probe + an auditor that sees the
                                        code but no agent-instruction files; writes audit.md. Local pages
@@ -45,7 +45,7 @@ Commands:
   audit --check-blind [--model ID]     prove on this machine that the auditor is blind and confined
   crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]...
         [--viewports 390x844,1440x900] [--storage-state FILE] [--no-click] [--max-controls-per-page 60]
-        [--concurrency 2] [--timeout MS] [--max-minutes 30] [--fail-on high|medium|low|none]
+        [--concurrency 2] [--timeout MS] [--settle-ms 700] [--max-minutes 30] [--fail-on high|medium|low|none]
         [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
                                        whole-site check, no AI tokens: opens every page (same-origin,
                                        one route per id pattern, max 2 each), clicks every safe control
@@ -76,7 +76,7 @@ async function main(argv) {
       port: { type: 'string' }, host: { type: 'string' }, origin: { type: 'string', multiple: true }, 'client-token': { type: 'string', multiple: true }, 'admin-token': { type: 'string' }, webhook: { type: 'string' }, 'webhook-secret': { type: 'string' },
       viewports: { type: 'string' }, agent: { type: 'string' }, 'agent-cmd': { type: 'string' }, model: { type: 'string' }, 'no-click': { type: 'boolean' }, watch: { type: 'boolean' }, 'base-url': { type: 'string' }, keep: { type: 'boolean' }, 'check-blind': { type: 'boolean' }, 'allow-remote': { type: 'boolean' },
       'max-pages': { type: 'string' }, 'max-depth': { type: 'string' }, include: { type: 'string', multiple: true }, exclude: { type: 'string', multiple: true }, 'storage-state': { type: 'string' }, 'max-controls-per-page': { type: 'string' },
-      concurrency: { type: 'string' }, 'max-minutes': { type: 'string' }, 'fail-on': { type: 'string' }, summarize: { type: 'boolean' }, save: { type: 'string' },
+      concurrency: { type: 'string' }, 'max-minutes': { type: 'string' }, 'settle-ms': { type: 'string' }, 'fail-on': { type: 'string' }, summarize: { type: 'boolean' }, save: { type: 'string' },
       'auth-module': { type: 'string' }, 'base-path': { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     },
   });
