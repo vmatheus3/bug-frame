@@ -20,6 +20,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 | **Triage without the tab hunt** | A private inbox with search, status and kind filters, sorting, screenshots, and request history. |
 | **Hand the context to your coding agent** | Copy a report as Markdown, export a worklist grouped by page, or connect new-ticket notifications to Codex. |
 | **Close the loop** | Deliver a change with a note. The customer checks the live page, approves, or requests an adjustment. |
+| **Let the page check itself** | Developers click **Analyze this page**; `bugframe audit` measures it in a real browser at phone to desktop sizes and returns a report of layout, contrast, accessibility and dead-button problems. [How it works](#analyze-a-page-blind-audit) |
 
 **Your infrastructure. Your reports. MIT licensed.** No Bugframe account, subscription, or analytics. Use your existing website login, keep reports on your server, or collect ZIP files without a server. Hosting and any optional AI service are yours to choose.
 
@@ -65,6 +66,12 @@ On phones, the send button stays outside the scrolling form and follows the visu
 | 3. Invite an approved customer | 4. Review the delivered change |
 | --- | --- |
 | ![Secure customer invitation using the website’s existing verified login](docs/images/customer-invitation.png) | ![Customer review: check the updated page, approve, or request an adjustment](docs/images/customer-review.png) |
+
+**For developers: Analyze this page.** Signed in as an administrator, pick **Analyze this page** from the Bugframe menu; `npx bugframe audit --watch` measures the page and the report lands in the private inbox. [Details](#analyze-a-page-blind-audit)
+
+| 5. Ask for a page analysis | 6. Read the report in the inbox |
+| --- | --- |
+| ![The Bugframe menu, signed in as a developer, with the Analyze this page item](docs/images/analyze-page-menu.png) | ![Private inbox showing a Page analysis request with its findings summary and the full report](docs/images/page-audit-report.png) |
 
 These are **screenshots of the running interface**, using a fictional Northstar Studio website and disposable local accounts. They replace the older illustrative mockups. The demonstration actually updates the example headline before requesting approval. See [the screenshot gallery and reproduction instructions](docs/MOCKUPS.md).
 
@@ -498,11 +505,30 @@ assertion.
 Developers get one more item in the widget menu: **Analyze this page**. It is shown only when the server says the
 signed-in account is an administrator (`GET /access` → `role: "admin"`), and the server refuses page-analysis requests
 from anyone else (`403`). One click captures the screen and context like a normal report (no area, no form) and queues a
-report of kind `audit`. Then, on the machine that has the code:
+report of kind `audit`.
+
+**1. Click Analyze this page.** The request is queued at once; the widget says so.
+
+| Open the menu | Analysis queued |
+| --- | --- |
+| ![Bugframe menu open on a demo pricing page, showing Analyze this page (developer)](docs/images/analyze-page-menu.png) | ![Confirmation: Analysis queued. Run npx bugframe audit --watch in your project to process it](docs/images/analyze-page-queued.png) |
+
+**2. Run the auditor** on the machine that has the code:
 
 ```bash
 npx bugframe audit --watch --dir ./bug-reports --project . --base-url http://localhost:3000
 ```
+
+**3. Read the report in the inbox and hand it to your coding agent.** The request turns *Ready for your review*, the
+note lists the severity counts and the top findings, and the full report sits under **Page analysis report**. Give your
+coding agent that report (it is also saved as `audit.md` next to the request in your reports folder).
+
+![Inbox with the Page analysis badge, the summary note and the report: low contrast, sideways overflow at 390 px, a button that does nothing, an image without alt text](docs/images/page-audit-report.png)
+
+*This picture is a real probe-only run (`--agent none`, no AI model) on the demo page `examples/plain-html/audit-demo.html`
+(`/plans` in `npm run example`), which has those problems planted on purpose. With Claude Code installed, the auditor
+adds the root cause as `file:line` and a fix for each finding.*
+
 
 For each queued analysis it builds a **blind copy** of the project, measures the page in a real browser, runs a
 specialised auditor on that evidence and the code, and stores `audit.md` (and `audit.json`) next to the report. The
@@ -616,8 +642,8 @@ element positions at capture time; content that moves during capture can leave a
 
 | Build | Raw | Gzip |
 | --- | --- | --- |
-| `dist/bugframe.min.js` (script tag, includes html-to-image) | 53 KB | 18 KB |
-| `dist/bugframe.mjs` (ES module; html-to-image loaded on first report) | 53 KB (unminified, your bundler shrinks it) | 15 KB |
+| `dist/bugframe.min.js` (script tag, includes html-to-image) | 69 KB | 22 KB |
+| `dist/bugframe.mjs` (ES module; html-to-image loaded on first report) | 73 KB (unminified, your bundler shrinks it) | 20 KB |
 
 ## FAQ
 

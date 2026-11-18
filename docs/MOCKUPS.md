@@ -14,6 +14,9 @@ These images show the actual Bugframe 0.5.0 interface running in Chromium. They 
 | `images/customer-review-es.png` | The same customer interface in Spanish. |
 | `images/customer-review-pt.png` | The same customer interface in Portuguese. |
 | `images/customer-approved.png` | Customer-approved result and progress history. |
+| `images/analyze-page-menu.png` | A developer opens the Bugframe menu on a demo pricing page and sees **Analyze this page**. |
+| `images/analyze-page-queued.png` | The confirmation after the analysis is queued. |
+| `images/page-audit-report.png` | The private inbox with the page-analysis request and its report, from a real probe-only `bugframe audit --watch --once --agent none` run (no AI model) on the demo page with planted problems. |
 
 ## Reproduce
 
@@ -25,7 +28,7 @@ npx playwright install chromium
 npm run docs:images
 ```
 
-The capture script starts an isolated loopback demo with disposable accounts and report storage, signs in through real session flows, accepts an invitation, submits feedback through the real widget, and opens the developer inbox. It updates the fictional headline in a disposable source copy, requests customer review, changes the interface language, and records the approval. It closes Chromium and removes its temporary data afterward. The repository’s demo source is not modified during capture.
+The capture script starts an isolated loopback demo with disposable accounts and report storage, signs in through real session flows, accepts an invitation, submits feedback through the real widget, and opens the developer inbox. It updates the fictional headline in a disposable source copy, requests customer review, changes the interface language, and records the approval. Signed in as the developer, it queues **Analyze this page** on the demo pricing page (`examples/plain-html/audit-demo.html`), runs `bugframe audit --watch --once --agent none` against the disposable reports folder, and opens the report in the inbox. It closes Chromium and removes its temporary data afterward. The repository’s demo source is not modified during capture.
 
 The language screenshots intentionally keep the original English customer text and developer note: UI language changes do not translate or alter user-authored content. The example page is also available at `/review-demo?bugs=1` when running `npm run example`.
 
@@ -38,4 +41,7 @@ The language screenshots intentionally keep the original English customer text a
 ![Review the delivered change](images/customer-review.png)
 ![Spanish customer view](images/customer-review-es.png)
 ![Portuguese customer view](images/customer-review-pt.png)
+![Analyze this page in the developer menu](images/analyze-page-menu.png)
+![Analysis queued](images/analyze-page-queued.png)
+![Page analysis report in the inbox](images/page-audit-report.png)
 ![Approved request](images/customer-approved.png)

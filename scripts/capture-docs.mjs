@@ -1,6 +1,7 @@
 // Reproducible documentation screenshots of the real UI, on a fictional website with disposable local accounts.
 import { chromium } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -15,7 +16,7 @@ const origin = `http://127.0.0.1:${port}`, data = await mkdtemp(join(tmpdir(), '
 // A disposable copy lets the example headline really change before the customer reviews it.
 const demoRoot = join(data, 'app');
 await mkdir(join(demoRoot, 'examples/plain-html'), { recursive: true });
-for (const name of ['server.mjs', 'index.html', 'login.html', 'review-demo.html']) await cp(`examples/plain-html/${name}`, join(demoRoot, 'examples/plain-html', name));
+for (const name of ['server.mjs', 'index.html', 'login.html', 'review-demo.html', 'audit-demo.html']) await cp(`examples/plain-html/${name}`, join(demoRoot, 'examples/plain-html', name));
 await cp('src/server', join(demoRoot, 'src/server'), { recursive: true });
 await cp('package.json', join(demoRoot, 'package.json'));
 await mkdir(join(demoRoot, 'dist'), { recursive: true });
@@ -77,7 +78,21 @@ try {
   await capture(customer, 'customer-approved.png');
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await customerContext.storageState(), locale: 'en-US', colorScheme: 'light' });
   const phone = await phoneContext.newPage(); await phone.goto(origin + '/review-demo?bugs=1&lang=en'); await phone.locator('.feedback-start').click(); await phone.locator('#bf-text').fill('Please make this button easier to see.'); await capture(phone, 'mobile-feedback.png', false); await phoneContext.close();
-  console.log('Updated 10 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
+  // "Analyze this page": the developer queues a page analysis from the widget menu on a page with planted problems.
+  await owner.goto(origin + '/plans?bugs=1&lang=en');
+  await owner.locator('.fab').click(); await owner.locator('.menu .analyze').waitFor();
+  await capture(owner, 'analyze-page-menu.png', false);
+  await owner.locator('.menu .analyze').click(); await owner.getByRole('status').filter({ hasText: 'Analysis queued' }).waitFor();
+  await capture(owner, 'analyze-page-queued.png', false);
+  // The real `bugframe audit --watch` run, probe-only (--agent none): no AI model is called.
+  await promisify(execFile)(process.execPath, ['src/cli/bin.mjs', 'audit', '--watch', '--once', '--dir', join(data, 'reports'), '--project', demoRoot, '--agent', 'none'], { timeout: 300_000 });
+  await owner.goto(origin + '/bugs/?lang=en');
+  await owner.locator('#reports button').filter({ hasText: 'Page analysis requested' }).click();
+  await owner.locator('#audit-text').filter({ hasText: 'Page audit' }).waitFor();
+  // Request, note and report only: the screenshots and status form below it are already shown in bugframe-overview.png.
+  const panel = await owner.locator('#audit-panel').boundingBox();
+  await owner.screenshot({ path: join(directory, 'page-audit-report.png'), fullPage: true, animations: 'disabled', clip: { x: 0, y: 0, width: 1440, height: Math.ceil(panel.y + panel.height + 32) } });
+  console.log('Updated 13 real UI screenshots in docs/images. Fictional content; no live accounts or report data used.');
 } finally {
   await browser?.close();
   const exited = new Promise(resolve => server.once('exit', resolve)); server.kill();

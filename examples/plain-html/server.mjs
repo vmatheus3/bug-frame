@@ -33,7 +33,7 @@ const bf = createBugframe({
 const api = toNodeListener(bf);
 const inbox = createInbox({ bugframe: bf, loginUrl: '/login', siteName: process.env.BUGFRAME_SITE_NAME ?? 'Bugframe demo' });
 const review = toNodeListener(inbox);
-const assets = { '/review-demo': ['review-demo.html', 'text/html; charset=utf-8', here], '/': ['index.html', 'text/html; charset=utf-8', here], '/login': ['login.html', 'text/html; charset=utf-8', here], '/bugframe.min.js': ['bugframe.min.js', 'text/javascript; charset=utf-8', join(here, '../../dist')] };
+const assets = { '/review-demo': ['review-demo.html', 'text/html; charset=utf-8', here], '/plans': ['audit-demo.html', 'text/html; charset=utf-8', here], '/': ['index.html', 'text/html; charset=utf-8', here], '/login': ['login.html', 'text/html; charset=utf-8', here], '/bugframe.min.js': ['bugframe.min.js', 'text/javascript; charset=utf-8', join(here, '../../dist')] };
 const redirect = res => { res.writeHead(303, { location: '/?bugs=1' }); res.end(); };
 
 const server = createServer(async (req, res) => {
@@ -71,7 +71,7 @@ const server = createServer(async (req, res) => {
   if (!hit) { res.writeHead(404); return res.end('Not found'); }
   try {
     let content = await readFile(join(hit[2], hit[0]));
-    if (path === '/' || path === '/review-demo') {
+    if (path === '/' || path === '/review-demo' || path === '/plans') {
       const signedIn = Boolean(userFor(req.headers.cookie));
       const access = await bf.handle(new Request(`http://127.0.0.1:${port}/api/bugframe/access`, { headers: { cookie: req.headers.cookie ?? '' } }));
       const approved = access.ok;
