@@ -91,3 +91,44 @@ test('setup uses website accounts with no customer password and preserves existi
     await assert.rejects(() => setupProject({ project: dir, site: 'https://example.test' }), /already exists/);
   } finally { await cleanup(dir); }
 });
+
+test('the command line helps: one command\'s help, a suggestion for a typo, aligned lists, a missing folder is named', async () => {
+  const dir = await tmpDir();
+  try {
+    await assert.rejects(() => run(dir, 'lst'), /Unknown command "lst"\. Did you mean "list"\?/);
+    await assert.rejects(() => run(dir, 'craw', 'http://localhost:3000/'), /Did you mean "crawl"\?/);
+    await assert.rejects(() => run(dir, 'frobnicate'), /Unknown command "frobnicate"\. Run bugframe --help/);
+    // `bugframe help crawl` and `bugframe crawl --help` print that command only, not the whole manual.
+    const crawl = await run(dir, 'help', 'crawl');
+    assert.match(crawl, /^Usage: bugframe crawl <start-url>/); assert.match(crawl, /--baseline FILE/); assert.match(crawl, /crawl login <url>/);
+    assert.doesNotMatch(crawl, /connect codex|audit --watch/);
+    assert.equal(await run(dir, 'crawl', '--help'), crawl);
+    assert.match(await run(dir, 'help', 'audit'), /audit --check-blind/);
+    assert.match(await run(dir, 'help'), /Commands:/);
+    await assert.rejects(() => run(dir, 'help', 'nonsense'), /No command "nonsense"/);
+    assert.match(await run(join(dir, 'not-there'), 'list'), /No bug reports\. \(The folder .*not-there does not exist yet\.\)/);
+    const { a } = await seed(dir);
+    await run(dir, 'ready', a, '--note', 'Deployed');
+    const rows = (await run(dir, 'list')).split('\n');
+    assert.equal(new Set(rows.map(r => r.indexOf(' /'))).size, 1, 'the page column lines up whatever the status');
+  } finally { await cleanup(dir); }
+});
+
+test('doctor says what works on this machine and how to get the rest, without failing', async () => {
+  const { doctor } = await import('../../src/cli/doctor.mjs');
+  const dir = await tmpDir();
+  try {
+    await seed(dir);
+    const all = await doctor({ dir, node: '22.3.0', onPath: () => true, playwright: async () => ({ version: '1.64.1', chromium: true }) });
+    assert.match(all, /ok +Node\.js 22\.3\.0/); assert.match(all, /ok +Reports folder .*3 reports/);
+    assert.match(all, /ok +Playwright 1\.64\.1 with Chromium/); assert.match(all, /ok +Claude Code/); assert.doesNotMatch(all, /missing|problem/);
+    const bare = await doctor({ dir: join(dir, 'nope'), node: '18.0.0', onPath: () => false, playwright: async () => null });
+    assert.match(bare, /problem +Node\.js 18\.0\.0: Bugframe needs 18\.17 or newer/);
+    assert.match(bare, /missing +Playwright: needed for audit and crawl\. Install it with: npm i -D playwright && npx playwright install chromium/);
+    assert.match(bare, /missing +Claude Code \(claude\): .*--agent none/);
+    assert.match(bare, /missing +Reports folder .*nope: it is created by the first report/);
+    const old = await doctor({ dir, node: '22.3.0', onPath: () => true, playwright: async () => ({ version: '1.40.0', chromium: false }) });
+    assert.match(old, /problem +Playwright 1\.40\.0: audit and crawl need 1\.48 or newer/);
+    assert.match(await run(dir, 'doctor'), /Node\.js/);
+  } finally { await cleanup(dir); }
+});

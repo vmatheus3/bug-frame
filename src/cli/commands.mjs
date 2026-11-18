@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { access, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join, resolve, basename } from 'node:path';
 import { createFileStorage } from '../server/storage-fs.mjs';
 import { FEEDBACK_KINDS, ID_RE, FILE_NAMES, isOpen, isActionable, cleanContext, isPng, text } from '../server/util.mjs';
@@ -12,7 +12,11 @@ export function openStore(dir) { return createFileStorage({ dir }); }
 export async function cmdList(dir, { open = false, json = false } = {}) {
   const rows = (await openStore(dir).list()).filter(r => !open || isOpen(r.status));
   if (json) return JSON.stringify(rows, null, 2);
-  if (!rows.length) return open ? 'No open bug reports.' : 'No bug reports.';
+  if (!rows.length) {
+    // An empty list from a folder that is not there is usually a wrong --dir: say which folder was read.
+    const missing = await access(resolve(dir)).then(() => '', () => ` (The folder ${resolve(dir)} does not exist yet.)`);
+    return `${open ? 'No open bug reports.' : 'No bug reports.'}${missing}`;
+  }
   return rows.map(oneLine).join('\n');
 }
 

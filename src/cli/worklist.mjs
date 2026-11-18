@@ -8,7 +8,7 @@ export function pageOf(r) {
 }
 
 export function oneLine(r) {
-  return `${r.id}  ${String(r.status ?? 'open').padEnd(6)}  ${pageOf(r).slice(0, 32).padEnd(32)}  ${one(r.description).slice(0, 70)}`;
+  return `${r.id}  ${String(r.status ?? 'open').padEnd(17)}  ${pageOf(r).slice(0, 32).padEnd(32)}  ${one(r.description).slice(0, 70)}`;
 }
 
 export function showText(r, dir) {

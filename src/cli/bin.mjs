@@ -63,6 +63,9 @@ Commands:
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL] [--webhook-secret S]
                                        authorized sessions via a module exporting authorize(request), or admin-token access only
                                        set BUGFRAME_ADMIN_TOKEN / BUGFRAME_AUTH_MODULE to keep config out of shell history
+  doctor [--project FOLDER]            what works on this machine (Node.js, reports folder, Playwright,
+                                       Claude Code, Codex) and how to get the rest; changes nothing
+  help [command]                       this text, or one command's part of it (also: <command> --help)
 
 Options:
   --dir <folder>   reports folder (env BUGFRAME_DIR, default ./bug-reports)
@@ -72,6 +75,24 @@ Options:
   --timeout <ms>        remote request timeout, default 30000
   -h, --help       this text          -v, --version   print the version
 `;
+
+const COMMANDS = () => [...new Set(HELP.split('\n').map(line => /^ {2}([a-z]+)\b/.exec(line)?.[1]).filter(Boolean))];
+/** One command's part of the help: its usage lines and what they say. */
+function helpFor(name) {
+  const lines = HELP.split('\n'), out = []; let on = false;
+  for (const line of lines.slice(lines.indexOf('Commands:') + 1, lines.indexOf('Options:'))) {
+    const head = /^ {2}([a-z]+)\b/.exec(line); if (head) on = head[1] === name;
+    if (on && line.trim()) out.push(line);
+  }
+  if (!out.length) throw new CliError(`No command "${name}". Commands: ${COMMANDS().join(', ')}.`);
+  return `Usage: bugframe ${out[0].trim()}\n${out.slice(1).join('\n')}`.trimEnd();
+}
+/** The closest command to a typo, when it is close enough to be one. */
+function nearest(word) {
+  const distance = (a, b) => { const row = Array.from({ length: b.length + 1 }, (_, i) => i); for (let i = 1; i <= a.length; i++) { let prev = row[0]; row[0] = i; for (let j = 1; j <= b.length; j++) { const keep = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = keep; } } return row[b.length]; };
+  const [best] = COMMANDS().map(c => [c, distance(String(word).toLowerCase(), c)]).sort((a, b) => a[1] - b[1]);
+  return best && best[1] <= 2 ? best[0] : null;
+}
 
 async function main(argv) {
   const { values, positionals } = parseArgs({
@@ -88,7 +109,10 @@ async function main(argv) {
   });
   const [cmd, arg] = positionals;
   if (values.version) { const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')); return pkg.version; }
+  if (cmd === 'help') return arg ? helpFor(arg) : HELP;
+  if (values.help && cmd) return helpFor(cmd);
   if (values.help || !cmd) return HELP;
+  if (cmd === 'doctor') return (await import('./doctor.mjs')).doctor({ dir: values.dir ?? process.env.BUGFRAME_DIR ?? './bug-reports', project: values.project });
   const dir = values.dir ?? process.env.BUGFRAME_DIR ?? './bug-reports';
   const need = () => { if (!arg) throw new CliError(`${cmd} needs an id`); return arg; };
   if (cmd === 'setup') return setupProject({ project: values.project, site: values.site, authModule: values['auth-module'] });
@@ -137,7 +161,7 @@ async function main(argv) {
       console.log(`bugframe server on http://${host}:${port}${bf.basePath} saving to ${dir}`);
       return null; // keep running
     }
-    default: throw new CliError(`Unknown command "${cmd}". Run bugframe --help.`);
+    default: { const guess = nearest(cmd); throw new CliError(guess ? `Unknown command "${cmd}". Did you mean "${guess}"? (bugframe help ${guess})` : `Unknown command "${cmd}". Run bugframe --help.`); }
   }
 }
 
