@@ -8,7 +8,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
 [![Download](https://img.shields.io/badge/download-v0.5.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0)
 
-[Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Audit the whole site](#audit-the-whole-site-no-ai-tokens) · [Connect Codex](#new-tickets--codex-inbox) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
+[Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Audit the whole site](#audit-the-whole-site-no-ai-tokens) · [Connect your agent](#new-tickets--your-coding-agent) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
 
 ![Bugframe: a screenshot, one message, and send](docs/images/simple-feedback.png)
 
@@ -18,10 +18,10 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 | --- | --- |
 | **Capture in context** | Automatic screenshots, optional point-and-drag selection, bugs, design feedback, content changes, and ideas. |
 | **Triage without the tab hunt** | A private inbox with search, status and kind filters, sorting, screenshots, and request history. |
-| **Hand the context to your coding agent** | Copy a report as Markdown, export a worklist grouped by page, or connect new-ticket notifications to Codex. |
+| **Hand the context to your coding agent** | Copy a report as Markdown, export a worklist grouped by page (from a local folder or a hosted site, pictures included), or have new tickets start Codex, Claude Code or any command. |
 | **Close the loop** | Deliver a change with a note. The customer checks the live page, approves, or requests an adjustment. |
-| **Let the page check itself** | Developers click **Analyze this page**; `bugframe audit` measures it in a real browser at phone to desktop sizes and returns a report of layout, contrast, accessibility and dead-button problems. [How it works](#analyze-a-page-blind-audit) |
-| **Check the whole site, free** | `bugframe crawl` opens every page of your site or CRM, clicks every safe button and maps what each one does: dead buttons, broken links, menus that differ between pages, the same action wired differently. A script, no AI tokens. [How it works](#audit-the-whole-site-no-ai-tokens) |
+| **Let the page check itself** | Developers click **Analyze this page**; `bugframe audit` measures it in a real browser at phone to desktop sizes and returns a report of layout, contrast, accessibility and dead-button problems, shown in the inbox. Works against a hosted site too. [How it works](#analyze-a-page-blind-audit) |
+| **Check the whole site, free** | `bugframe crawl` opens every page of your site or CRM, clicks every safe button and maps what each one does: dead buttons, broken links, menus that differ between pages, the same action wired differently. A script, no AI tokens; a baseline makes it a CI check that only fails on new problems. [How it works](#audit-the-whole-site-no-ai-tokens) |
 
 **Your infrastructure. Your reports. MIT licensed.** No Bugframe account, subscription, or analytics. Use your existing website login, keep reports on your server, or collect ZIP files without a server. Hosting and any optional AI service are yours to choose.
 
@@ -46,7 +46,12 @@ In another terminal in the repository:
 node src/cli/bin.mjs --dir ./examples/plain-html/reports list
 node src/cli/bin.mjs --dir ./examples/plain-html/reports export
 node src/cli/bin.mjs --dir ./examples/plain-html/reports close <id> --note "Fixed the overlapping footer"
+node src/cli/bin.mjs doctor      # what works on this machine (Playwright, Claude Code, …) and how to get the rest
 ```
+
+![bugframe doctor: Node.js, the reports folder, Playwright with Chromium, Claude Code and Codex, each ok or missing with the command that fixes it](docs/images/cli-doctor.png)
+
+`bugframe help <command>` (or `<command> --help`) prints one command's options; a mistyped command suggests the closest one.
 
 ## How it works
 
@@ -102,7 +107,7 @@ Customer-written feedback, developer notes, project names, and the reviewed webs
   write a plain-language answer back to the reporter.
 - **Approved users only.** Reporting requires a server-verified login and reporting permission. `?bugs=1` only controls visibility; ordinary visitors cannot authorize themselves.
 
-## Set up with Codex — website login, no extra customer password
+## Set up with your coding agent: website login, no extra customer password
 
 Install the package, then generate a private integration starter in your existing website project:
 
@@ -112,11 +117,13 @@ npx bugframe setup --site https://your-site.example --project .
 npx bugframe setup --site https://your-site.example --project . --auth-module ./bugframe-auth.mjs
 ```
 
-Ask Codex to follow `.bugframe/AGENT_SETUP.md`. It tells the builder to reuse the actual website session verifier, approved-user permissions, and existing server routes. The generated authorizer denies access until that integration is completed. No public mode or additional customer password is enabled. The older single-owner access-key demonstration remains an explicitly optional development example.
+Ask your coding agent (Codex, Claude Code or another) to follow `.bugframe/AGENT_SETUP.md`. It tells the builder to reuse the actual website session verifier, approved-user permissions, and existing server routes. The generated authorizer denies access until that integration is completed. No public mode or additional customer password is enabled. The older single-owner access-key demonstration remains an explicitly optional development example.
 
 The starter creates private `.bugframe/` files and ignores the folder in Git. Its `credentials.json` is an automatically generated **server/connector credential**, not a code customers type. Keep it out of browser code, prompts, screenshots, and public files. Use your hosting secret store for production credentials and persistent private report storage. Existing setup files are never overwritten.
 
-## New tickets → Codex inbox
+## New tickets → your coding agent
+
+### Codex inbox
 
 Run the following in the website project after installing and signing into the Codex CLI:
 
@@ -134,6 +141,27 @@ The developer inbox’s **Connect Codex** panel shows whether the connector is s
 Notifications contain validated ticket IDs and canonical feedback kinds. Customer descriptions, screenshots, and server credentials are not pasted into the Codex prompt. Automatic acknowledgment turns use read-only permissions and do not constitute permission to implement a requested change. Open your project coding chat when you want to triage or fix a request. The connector uses the signed-in Codex account and its usage limits; Bugframe itself remains free. It uses the [official Codex App Server protocol](https://developers.openai.com/codex/app-server/) and was checked with CLI 0.162.1. It does not require a separate OpenAI API key.
 
 For explicit local testing only, `--allow-localhost` permits HTTP to `127.0.0.1`, `localhost`, or `[::1]`; hosted connections require HTTPS. No inbound ports, public tunnel, or browser admin credential is required for the connector.
+
+### Any other agent or script
+
+`connect agent` is the same connector (same polling, private checkpoints, lock and status in the inbox) with your own command instead of Codex:
+
+```bash
+npx bugframe connect agent \
+  --remote https://your-site.example/api/bugframe --project . \
+  --agent-cmd 'claude -p "New Bugframe tickets: $BUGFRAME_REPORT_IDS. Read them with npx bugframe --remote $BUGFRAME_API show <id> and reply with a triage summary only."'
+```
+
+The command runs in the project folder once per batch of new tickets (20 at most). It gets the validated ticket ids and
+their kind as JSON on stdin (`{ "endpoint": "…", "reports": [{ "id": "bug-…", "kind": "bug" }] }`) and in
+`BUGFRAME_REPORT_IDS` (space separated), `BUGFRAME_REPORT_COUNT` and `BUGFRAME_API`. It never gets a customer's text
+(untrusted, it stays in Bugframe until your agent asks for it) and never the private credential: give your agent its own
+access if it should read the tickets. Exit code 0 acknowledges the batch; any other exit code, or no answer within ten
+minutes, keeps those tickets queued for the next check.
+
+![Terminal: bugframe connect agent runs a command for the waiting requests and prints what the command received: the API address and four ticket ids with their kinds, never their text](docs/images/connect-agent.png)
+
+*Real output against the local demo server; whatever your command prints is shown by the listener.*
 
 ### Optional webhooks for other automation
 
@@ -238,7 +266,7 @@ available when allowed, except for authorization failures (401/403).
 | React / Preact / Next.js | `useEffect(() => { const b = init({...}); return () => b.destroy(); }, [])` - [examples/react](examples/react), [examples/nextjs](examples/nextjs) |
 | Vue / Nuxt / Svelte / SvelteKit / Angular | call `init()` on mount - [examples/vue-svelte](examples/vue-svelte) |
 | Server: Node http, Express, Fastify, Connect | `toNodeListener(bf)` / `expressMiddleware(bf)` - [examples/express](examples/express) |
-| Server: Next.js, SvelteKit, Remix, Hono, Workers, Deno, Bun | `routeHandlers(bf)` or `bf.handle(request)` (plain `Request` to `Response`) |
+| Server: Next.js, SvelteKit, Remix, Hono, Workers, Deno, Bun | `routeHandlers(bf)` (`GET`, `POST`, `PUT`, `PATCH`, `OPTIONS`) or `bf.handle(request)` (plain `Request` to `Response`) |
 | Server: not Node (PHP, Python, Go...) | Run `bugframe serve` beside it, or implement the HTTP routes below; the JSON shape is documented here |
 
 ```js
@@ -380,7 +408,9 @@ HTTP routes (relative to `basePath`):
 | `GET /reports` | approved account | Only reports belonging to the verified account. Admin: `?all=1`. |
 | `GET /reports/:id/region.png`, `/full.png` | client (own) / admin | The pictures. |
 | `GET /reports/:id` | admin | Full report. |
-| `PATCH /reports/:id` | admin | `{ status, note }`; developer statuses listed below. Customer approval cannot be set here. |
+| `PATCH /reports/:id` | admin | `{ status, note }`; developer statuses listed below. Customer approval cannot be set here. For a page-analysis request also `audit` (the watcher's attempts and counts, a fixed shape). |
+| `GET /reports/:id/audit.md` | admin | The page-analysis report, `text/markdown`, `nosniff`, sandboxed. |
+| `PUT /reports/:id/audit.md`, `/audit.json` | admin | Upload a page-analysis result (`text/markdown` / `application/json`, 2 MB). Page-analysis requests only; storage must implement `writeAttachment`. Used by `bugframe audit --watch --remote`. |
 | `POST /reports/:id/review` | original reporter | `{ action: "approve" \| "request_changes", reviewVersion, note? }`. Only a current delivery can be reviewed; adjustments require a note. |
 | `POST /invitations`, `GET /invitations` | admin | Create `{ email, expiresInDays?: 7 }` (1–30 days), or list without secrets. Creation returns a one-use `token` once. |
 | `POST /invitations/accept` | signed-in `user` | `{ token }`; requires a matching verified email. No login session is created. |
@@ -425,15 +455,19 @@ bugframe [--dir ./bug-reports] <command>
   close <id> --note "..." [--status fixed|wontfix]
   ready <id> --note "what changed and what to review"
   reopen <id>                       import <report.zip>
-  [--remote HTTPS_API_URL --credentials FILE --timeout 30000] list|show|close|ready|reopen
+  [--remote HTTPS_API_URL --credentials FILE --timeout 30000] list|show|export|close|ready|reopen
   serve [--port 4455] [--origin URL]... [--auth-module FILE] [--admin-token T] [--webhook URL]
-  audit <url> --project FOLDER [--out DIR] [--viewports …] [--agent claude|none | --agent-cmd CMD] [--model ID] [--no-click] [--timeout MS] [--keep] [--base-url URL] [--allow-remote]
+  connect codex --remote HTTPS_API_URL --project FOLDER [--include-existing] [--once]
+  connect agent --remote HTTPS_API_URL --project FOLDER --agent-cmd "COMMAND" [--include-existing] [--once]
+  audit <url> --project FOLDER [--out DIR] [--viewports …] [--agent claude|none | --agent-cmd CMD] [--model ID] [--no-click] [--settle-ms 700] [--timeout MS] [--keep] [--base-url URL] [--allow-remote]
   audit --watch --project FOLDER [--base-url http://localhost:3000] [--once] [--out DIR] [--allow-remote]
+  audit --watch --remote HTTPS_API_URL --project FOLDER --base-url http://localhost:3000
   audit --check-blind [--model ID]
   crawl <start-url> [--out DIR] [--max-pages 200] [--max-depth 6] [--include GLOB]... [--exclude GLOB]... [--viewports 390x844,1440x900]
-        [--storage-state FILE] [--no-click] [--max-controls-per-page 60] [--concurrency 2] [--timeout MS] [--max-minutes 30]
-        [--fail-on high|medium|low|none] [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
+        [--storage-state FILE] [--no-click] [--max-controls-per-page 60] [--concurrency 2] [--timeout MS] [--settle-ms 700] [--max-minutes 30]
+        [--fail-on high|medium|low|none] [--baseline FILE] [--save-baseline FILE] [--allow-remote] [--summarize [--model haiku] [--budget 20000]]
   crawl login <url> [--save .bugframe-auth.json]
+  doctor [--project FOLDER]         help [command]
 ```
 
 `--dir` can also come from `BUGFRAME_DIR`. `serve` reads `BUGFRAME_ADMIN_TOKEN` and `BUGFRAME_AUTH_MODULE`.
@@ -453,15 +487,25 @@ bugframe --remote https://example.com/api/bugframe show <id>
 bugframe --remote https://example.com/api/bugframe ready <id> --note "The update is live. Please review the page."
 bugframe --remote https://example.com/api/bugframe close <id> --note "Deployed and verified the fix"
 bugframe --remote https://example.com/api/bugframe reopen <id>
+bugframe --remote https://example.com/api/bugframe export            # worklist + pictures in ./bugframe-remote/
 ```
 
 `--credentials FILE` or `BUGFRAME_CREDENTIALS_FILE` selects another private JSON file. `BUGFRAME_ADMIN_TOKEN` takes precedence.
 The client requires HTTPS, refuses redirects and embedded URL credentials, and times out after 30 seconds (`--timeout` sets
 1–300000 milliseconds). Credentials never appear in request-error output. `show` prints JSON plus protected image URLs;
 accessing those images also requires authorization. Responses are limited to 8 MB. `--json` gives machine-readable list or
-status output. Remote `export`, `import`, and `serve` are rejected, and `--remote` cannot be combined with `--dir`.
+status output. Remote `import` and `serve` are rejected, and `--remote` cannot be combined with `--dir`.
 Local CLI commands retain their existing behavior. Treat report text as untrusted evidence, and close reports only after
 explicitly requested fixes have been deployed and verified.
+
+**Worklist from a hosted site.** `--remote … export` copies the requests to work on, with both screenshots each, into a
+private local folder (`./bugframe-remote/`, or the folder of `--out FILE`; directories `0700`, files `0600`; a picture
+that is not a PNG is refused) and writes `WORKLIST.md` there with local picture paths, so a coding agent can open the
+pictures. The list tells the agent to hand work back with `bugframe --remote <url> ready <id>`: the local copy is
+read-only context. `--all`, `--budget` and `--playwright` work as for a local folder. The folder holds customer
+screenshots: keep it out of git (`bugframe-remote/` in `.gitignore`).
+
+![Terminal: bugframe --remote export writes WORKLIST.md with one request and its pictures into a private folder; the worklist shows the request, its link, viewport and the local picture path](docs/images/remote-export.png)
 
 ## The workflow with an AI coding agent
 
@@ -525,10 +569,11 @@ npx bugframe audit --watch --dir ./bug-reports --project . --base-url http://loc
 ```
 
 **3. Read the report in the inbox and hand it to your coding agent.** The request turns *Ready for your review*, the
-note lists the severity counts and the top findings, and the full report sits under **Page analysis report**. Give your
-coding agent that report (it is also saved as `audit.md` next to the request in your reports folder).
+note lists the severity counts and the top findings, and the full report sits under **Page analysis report**, rendered
+with its findings table and severity labels. **Copy analysis as Markdown** puts the original text on the clipboard for
+your coding agent (it is also saved as `audit.md` next to the request in your reports folder).
 
-![Inbox with the Page analysis badge, the summary note and the report: low contrast, sideways overflow at 390 px, a button that does nothing, an image without alt text](docs/images/page-audit-report.png)
+![Inbox with the Page analysis badge, the summary note and the rendered report: a findings table with severity labels (low contrast, sideways overflow at 390 px, a button that does nothing, an image without alt text) and the Copy analysis as Markdown button](docs/images/page-audit-report.png)
 
 *This picture is a real probe-only run (`--agent none`, no AI model) on the demo page `examples/plain-html/audit-demo.html`
 (`/plans` in `npm run example`), which has those problems planted on purpose. With Claude Code installed, the auditor
@@ -538,12 +583,25 @@ adds the root cause as `file:line` and a fix for each finding.*
 For each queued analysis it builds a **blind copy** of the project, measures the page in a real browser, runs a
 specialised auditor on that evidence and the code, and stores `audit.md` (and `audit.json`) next to the report. The
 request moves to *Ready for your review* with a short note (severity counts and the top three findings); the private
-inbox shows a **Page analysis** badge and the full report as plain text. Failures leave the request open with the
-reason; each request gets at most three attempts. `--base-url` swaps the captured origin for your dev server, so a
-request made on a staging or live page is measured locally. Watch mode works on a local reports folder only: the API
-has no route for uploading results, by design. Ctrl+C stops it: the running auditor and everything it started are
-killed, the blind copy is removed and the request goes back to *open* without using up an attempt (press Ctrl+C twice
-to force an immediate exit, still removing the copy).
+inbox shows a **Page analysis** badge and the rendered report. The report quotes text from the audited page, so the
+inbox treats it as untrusted: it builds headings, tables and lists from text only, takes no attribute from the report
+and never makes a link or an image live. Failures leave the request open with the reason; each request gets at most
+three attempts. `--base-url` swaps the captured origin for your dev server, so a request made on a staging or live page
+is measured locally. Ctrl+C stops it: the running auditor and everything it started are killed, the blind copy is
+removed and the request goes back to *open* without using up an attempt (press Ctrl+C twice to force an immediate exit,
+still removing the copy).
+
+**When the reports live on a hosted site**, run the same watcher against its API instead of a folder:
+
+```bash
+npx bugframe audit --watch --remote https://your-site.example/api/bugframe --project . --base-url http://localhost:3000
+```
+
+It lists the queue, claims a request, measures the page on your machine and uploads `audit.md` and `audit.json` through
+an admin-only route (`PUT /reports/:id/audit.md`): page-analysis requests only, exactly those two names, Markdown text
+or JSON, at most 2 MB, refused for any other account, kind or file and for cross-origin browsers. It needs the private
+admin credential (`BUGFRAME_ADMIN_TOKEN` or the credential file, as for the other remote commands) and a server on
+0.6.0 or newer; with Next.js-style route files, export `PUT` next to `GET`, `POST` and `PATCH`.
 
 **Local pages only.** The audit loads the page and clicks its controls, so it refuses any page that is not on your
 machine: only `localhost`, `*.localhost`, `*.test`, `127.0.0.0/8`, `::1` and `0.0.0.0` count as local. Private LAN
@@ -576,15 +634,25 @@ must match a fixed format; when it does not, the run is marked *degraded*, the r
 back to the probe-only report.
 
 **The click probe is safe by construction.** Each enabled, visible button and link (up to 40) is clicked in a fresh
-page. Every non-GET request is aborted and recorded ("would have sent POST /api/x"), WebSocket connections and beacons
-are blocked and recorded, forms never reach the network, downloads and service workers are off, popups are closed,
-navigations to other sites are aborted, dialogs are dismissed, and controls whose name, `aria-label`, `title` or whole
-link URL (path and query, split at camelCase, `-` and `_`, so `/items/8/deleteItem` and `/items/7?op=delete` count)
-says *delete, remove, pay, purchase, log out, sign out, cancel subscription* (and the Portuguese and Spanish
-equivalents) are never clicked. The link check uses the same rules: GET only, same-origin only, at most 30 links,
-destructive-looking URLs skipped, and redirects followed hop by hop so each hop is checked too. A control is reported
-as *appears dead* only when nothing at all happened: no DOM change, navigation, dialog, request, popup or console
-output. Because writes are blocked, content that needs a POST or a WebSocket to load may look empty; the report says so.
+page. Every non-GET request is aborted and recorded ("would have sent POST /api/x"); WebSocket connections are blocked
+and recorded in pages, iframes and Web Workers (a dedicated worker starts behind a stub that fails its sockets; a
+SharedWorker, or a worker started by a worker, is not started at all, because its requests cannot be guarded); beacons
+and WebTransport are blocked, forms never reach the network, downloads and service workers are off, popups are closed,
+dialogs are dismissed. Navigations are fetched one hop at a time: a navigation or redirect to another site, or to a
+destructive-looking URL, is aborted and recorded with its full target. Controls whose name, `aria-label`, `title` or
+whole link URL (path and query, split at camelCase, `-` and `_`, so `/items/8/deleteItem` and `/items/7?op=delete`
+count) says *delete, remove, pay, purchase, log out, log off, sign out, sign off, end session, cancel subscription*
+(and the Portuguese and Spanish equivalents: *sair, encerrar sessão, salir, cerrar sesión, …*) are never clicked, and
+once a click was dispatched an API call (fetch, XHR) to such a URL is blocked as well. GET requests a click fires to
+other URLs **are** sent: reading is what a page does. The link check uses the same rules: GET only, same-origin only,
+at most 30 links, destructive-looking URLs skipped, and redirects followed hop by hop so each hop is checked too.
+
+A control is reported as *appears dead* only when the click caused nothing of its own within the settle time
+(`--settle-ms`, 700 ms by default): no DOM change, navigation, dialog, request, popup or console output. What the page
+does by itself is measured in the window before the click and subtracted, so a poll or a ticking clock neither hides a
+dead button nor makes one look alive; on such a page a click with no effect of its own is reported as *unclear*, not as
+dead. A link to `#` that does nothing is dead; a link to `#section` that exists scrolls and is fine. Because writes are
+blocked, content that needs a POST or a WebSocket to load may look empty; the report says so.
 
 **What "blind" means.** The auditor must judge the page, not follow your team's AI rules. The copy (a new folder under
 the system temp dir) leaves out, at any depth and in any letter case:
@@ -633,7 +701,8 @@ tokens, so you can run it on every change or in CI.
 ![Crawl report: summary tiles, filters, and findings such as a repeated console error, a dead Export button, a contact form that never sends and a broken navigation link, each with a screenshot](docs/images/crawl-report.png)
 
 **1. (Optional) Sign in once**, if the pages are behind a login. A browser window opens; you sign in yourself and press
-Enter in the terminal. Bugframe never sees or stores your password, only the session cookies (in a `0600` file):
+Enter in the terminal (without a terminal, it waits until the browser has left the sign-in page and saves then, or
+saves nothing and says so). Bugframe never sees or stores your password, only the session cookies (in a `0600` file):
 
 ```bash
 npx bugframe crawl login http://localhost:3000/login --save .bugframe-auth.json
@@ -661,11 +730,14 @@ What it does:
 
 - **Finds every page.** Breadth-first through same-site links (also `area`, `data-href` and router links), redirects,
   `sitemap.xml` and URLs that buttons open (pushState and `#/hash` routes). Record pages collapse into one route:
-  `/clients/123` and `/clients/456` are `/clients/:id`, and only the first two of each are opened, so a CRM with 10,000
-  clients is not crawled 10,000 times.
+  `/clients/123` and `/clients/456` are `/clients/:id`, `/calendar/2026-01` is `/calendar/:date`, and only the first two
+  of each are opened, so a CRM with 10,000 clients is not crawled 10,000 times and a calendar that links to the next
+  month for ever is two pages.
 - **Clicks every safe control** in a fresh copy of the page and records what happened: `navigates` (where to),
   `opens` (dialog, menu, popup), `changes` (the page changed in place), `calls-backend` (the request it fired, e.g.
-  `POST /api/save`, blocked before it was sent), `error` or `dead` (nothing at all).
+  `POST /api/save`, blocked before it was sent), `error`, `dead` (nothing at all) or `unknown` (the page keeps changing
+  on its own, so a click with no effect of its own cannot be judged). What a page does by itself (polling, clocks) is
+  measured before the click and subtracted.
 - **Checks the whole system for inconsistencies**, like a design linter does for looks, but for wiring: dead buttons
   and forms that never send, links and routes that 404 or fail, pages nothing links to, a menu that differs on some
   pages, one label leading to different places (and one place with different labels), the same button wired differently
@@ -673,14 +745,42 @@ What it does:
   endpoints grouped across pages, spinners that never finish and pages mixing languages. Plus the page checks of
   `audit` (contrast, overflow, names, tap targets…) on every page.
 - **Never changes anything.** The same guards as `audit`: local sites only unless `--allow-remote`; every non-GET
-  request, form submission, WebSocket and beacon is blocked and recorded; downloads, popups and service workers are
-  off; controls and links that look destructive (delete, pay, cancel, **sign out**, … in English, Portuguese and Spanish)
-  are listed and never clicked, so your session survives; caps on pages, depth, clicks per page and time.
+  request, form submission, WebSocket (also from iframes and Web Workers) and beacon is blocked and recorded;
+  downloads, popups, service workers and SharedWorkers are off; a redirect that leaves the site is never followed and
+  is reported with its target; controls and links that look destructive (delete, pay, cancel, **sign out, log off**, …
+  in English, Portuguese and Spanish) are listed and never clicked or opened, so your session survives; caps on pages,
+  depth, clicks per page and time.
+
+**In CI: fail only on new problems.** An existing site has findings already. Save them once, commit the small file, and
+from then on only findings that are new since that baseline fail the run:
+
+```bash
+npx bugframe crawl http://localhost:3000/ --save-baseline crawl-baseline.json      # once; commit the file
+npx bugframe crawl http://localhost:3000/ --baseline crawl-baseline.json --fail-on high
+```
+
+Every finding has a fingerprint that survives between runs (its type, element and title with numbers blurred, plus its
+route when it is on one route). The reports mark what is new, lead with it, count what was fixed, and `crawl.html` gets
+a *New / Already known* filter.
+
+![Crawl report with a baseline: tiles for 2 new and 0 fixed since the baseline, the Baseline filter set to New, and the two new findings: a Save button that went dead and a link that now redirects to another site](docs/images/crawl-baseline.png)
+
+*A real run on a second version of the demo dashboard in which a "Save" button lost its handler and a link started
+redirecting to another website (which the crawl never contacts).*
+
+**In the inbox.** `npx bugframe --dir ./bug-reports crawl http://localhost:3000/` also files the run in the private
+inbox as a finished page analysis: the counts in the note, the findings rendered in the report, a picture of the start
+page.
+
+![Private inbox showing a Site crawl request: 5 high, 3 medium, 1 low in the note, and the rendered report with its summary table and top issues](docs/images/crawl-in-inbox.png)
 
 Exit code 1 with `--fail-on high` (or `medium`, `low`) when findings reach that level, for CI. `--summarize` is the only
 step that uses AI: a small model (`--model haiku` by default) gets a trimmed copy of `crawl.json` (about 20k tokens
 at most, printed before it runs) in an empty folder, with the same confined flags as `audit`, and writes `SUMMARY.md`:
 a fix plan grouped by root cause, checked so it only cites real findings.
+
+**Everything `crawl` can stop is listed in the report**: blocked writes, sockets, redirects and destructive URLs under
+*Not crawled and limits*, so you can see what it refused to do on your site.
 
 **`crawl` or `audit`?** Use `crawl` for the whole system: every page and button, wiring and consistency, free and fast
 enough for CI. Use `audit` for one page you want judged deeply: an AI auditor reads that page's evidence and your code
@@ -696,7 +796,8 @@ and returns `file:line` causes. Details, every option and the limits: [docs/craw
   URL flags, public tokens, and browser reporter ids never grant access. The admin token never belongs in a browser.
 - Server hardening: ids are validated against one exact pattern before touching the filesystem, only five fixed file names exist (report.json, two screenshots, and the optional page-analysis audit.md/audit.json),
   uploads must be real PNGs (signature + header), images are served `nosniff` with a locked CSP, tokens are compared in constant
-  time, bodies are size-limited while streaming.
+  time, bodies are size-limited while streaming. The one upload route beyond reports (page-analysis results) is admin-only,
+  takes text or JSON for those two names only, and the inbox shows that text without ever parsing it as HTML.
 - Reports can be shown to AI agents: treat their text as untrusted input (the supplied prompts say so).
 - Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
@@ -708,8 +809,10 @@ element positions at capture time; content that moves during capture can leave a
 
 | Build | Raw | Gzip |
 | --- | --- | --- |
-| `dist/bugframe.min.js` (script tag, includes html-to-image) | 69 KB | 22 KB |
-| `dist/bugframe.mjs` (ES module; html-to-image loaded on first report) | 73 KB (unminified, your bundler shrinks it) | 20 KB |
+| `dist/bugframe.min.js` (script tag, includes html-to-image) | 69 KB | 23 KB |
+| `dist/bugframe.mjs` (ES module; html-to-image loaded on first report) | 74 KB (unminified, your bundler shrinks it) | 21 KB |
+
+The installable package is about 0.35 MB (the pictures on this page are not in it).
 
 ## FAQ
 
@@ -731,7 +834,6 @@ reports as plain files that an AI agent can read, with nothing to sign up for.
 
 ## Roadmap
 
-- Remote worklist export with authenticated screenshot retrieval.
 - First-party adapters: S3/R2, GitHub Issues, SQLite.
 - Annotation tools (arrow, pen) on the selected area; optional redo of the region.
 - Optional DOM snapshot and short screen-recording as opt-in extras.
@@ -750,6 +852,14 @@ Translations, integration examples, documentation improvements, and fixes are we
 
 MIT, see [LICENSE](LICENSE). Bundles [html-to-image](https://github.com/bubkoo/html-to-image) (MIT), see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Upgrade to 0.6.0 (unreleased)
+
+Upgrade widget and server together. Nothing in stored reports changes. The widget's menu popover is now a dialog that
+contains a menu (was one menu); "Turn off" is a plain button. If you mount the API through route files (Next.js,
+SvelteKit…), export `PUT` as well to use `bugframe audit --watch --remote`. The `crawl` and `audit` click probes now
+measure a baseline before each click, so a page that polls reports `unknown` / *unclear* where it used to report
+`calls-backend` or *dead*; `--settle-ms` replaces the fixed 700 ms. `crawl.json` findings carry a `fingerprint`.
 
 ### Upgrade from 0.4.x to 0.5.0
 
