@@ -5,6 +5,25 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-18
+
+### Fixed
+- Leave feedback froze the page on iPhones and Safari: on an app page whose CSS reads inline styles (for example
+  `:has(> .dot[style*="--red"])`), the automatic screenshot took about 17 seconds with scrolling locked and nothing on
+  screen. html-to-image copied about 575 style properties per element one call at a time, and Safari rechecks those
+  selectors after every call. During the capture, computed styles now carry a `cssText`, so each element's style is
+  written in one assignment: 17.8 s became 1.3 s on a real 530-element dashboard (Safari engine, iPhone size), with an
+  identical picture. Chrome is unchanged (about 1 s). Pseudo-elements keep the browser's own path, and overlapping
+  captures restore `getComputedStyle` correctly.
+- **Analyze this page** no longer locks the page: taking its picture never blocks scrolling (only an open form or
+  selection does), and the confirmation says the analysis runs in the background and that its status and result appear
+  in **My requests** (English, Spanish, Portuguese).
+
+### Changed
+- One round bug button only. The wide **Leave feedback** button beside it is gone: it covered the page and phone menus,
+  and **Leave feedback** is already the first item of the round button's menu. Upgrade note: anything that clicked
+  `.feedback-start` now opens `.fab` and picks **Leave feedback**.
+
 ## [0.6.0] - 2026-11-18
 
 ### Fixed

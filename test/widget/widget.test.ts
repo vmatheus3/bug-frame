@@ -10,6 +10,8 @@ import { init, type BugframeInstance, type InitOptions } from '../../src/widget/
 let inst: BugframeInstance | null = null;
 const make = (o: InitOptions = {}) => { inst = init({ enable: 'always', ...o }); return inst; };
 const click = (sel: string) => { const el = q(sel); if (!el) throw new Error(`no ${sel}`); el.click(); };
+// The only way in: the round bug button, then "Leave feedback" at the top of its menu.
+const startReport = () => { click('.fab'); click('.menu .main'); };
 const pointer = (el: Element, type: string, x: number, y: number) => el.dispatchEvent(Object.assign(new Event(type, { bubbles: true, cancelable: true }), { clientX: x, clientY: y, pointerId: 1, button: 0 }));
 const jsonRes = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
@@ -17,11 +19,16 @@ beforeEach(() => { reset(); (HTMLElement.prototype as unknown as { setPointerCap
 afterEach(() => { inst?.destroy(); inst = null; });
 
 async function toSheet(o: InitOptions = {}) {
-  make(o); click('.feedback-start'); await flush();
+  make(o); startReport(); await flush();
   expect(q('.sheet')).toBeTruthy();
 }
 
 describe('mounting', () => {
+  it('only the round bug button floats on the page; Leave feedback is the first item of its menu', () => {
+    make(); expect(q('.feedback-start')).toBeNull(); expect(shadow().querySelectorAll('.fab-wrap > button').length).toBe(1);
+    const fab = q('.fab')!; expect(fab.querySelector('[data-icon="bug"]')).toBeTruthy();
+    click('.fab'); expect(q('.menu .main')!.textContent).toMatch(/Leave feedback/);
+  });
   it('shows nothing until enabled; ?bugs=1 turns it on and persists', () => {
     history.replaceState(null, '', '/?bugs=0'); inst = init({ endpoint: '/api/b' }); expect(document.querySelector('[data-bugframe]')).toBeNull(); inst.destroy();
     history.replaceState(null, '', '/?bugs=1'); inst = init({ endpoint: '/api/b', fetch: async () => jsonRes({ reports: [] }) }); expect(document.querySelector('[data-bugframe]')).toBeTruthy(); inst.destroy();
@@ -45,7 +52,7 @@ describe('mounting', () => {
     const chat = document.getElementById('chat')!; chat.getBoundingClientRect = () => ({ left: window.innerWidth - 70, right: window.innerWidth - 10, top: window.innerHeight - 70, bottom: window.innerHeight - 10, width: 60, height: 60, x: 0, y: 0, toJSON() {} });
     make({ avoid: ['#chat'] }); expect(parseInt(q('.fab-wrap')!.style.getPropertyValue('--bf-ey'))).toBeGreaterThan(40);
   });
-  it('uses the localized strings', () => { make({ locale: 'pt' }); expect(q('.bf')!.getAttribute('lang')).toBe('pt'); expect(q('.fab')!.getAttribute('aria-label')).toBe('Meus pedidos'); expect(q('.feedback-start')!.textContent).toContain('Deixar feedback'); });
+  it('uses the localized strings', () => { make({ locale: 'pt' }); expect(q('.bf')!.getAttribute('lang')).toBe('pt'); expect(q('.fab')!.getAttribute('aria-label')).toBe('Meus pedidos'); click('.fab'); expect(q('.menu .main')!.textContent).toContain('Deixar feedback'); });
 });
 
 describe('accessibility', () => {
@@ -92,7 +99,7 @@ describe('accessibility', () => {
     const last = q('.extras summary')!; last.focus();
     const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }); last.dispatchEvent(tab);
     expect(tab.defaultPrevented).toBe(true); expect(shadow().activeElement).toBe(q('.x'));
-    sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.sheet')).toBeNull(); expect(q('.feedback-start')).toBeTruthy();
+    sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.sheet')).toBeNull(); expect(q('.fab')).toBeTruthy(); expect(shadow().activeElement).toBe(q('.fab'));
   });
   it('type chips expose pressed state', async () => {
     await toSheet({ types: ['One', 'Two'] });
@@ -100,7 +107,7 @@ describe('accessibility', () => {
   });
   it('types: [] hides the chips', async () => { await toSheet({ types: [] }); expect(q('.chips:not(.kinds)')).toBeNull(); expect(q('.kinds')).toBeTruthy(); });
   it('region can be chosen from the keyboard', async () => {
-    make({ selection: 'area' }); click('.feedback-start'); await flush();
+    make({ selection: 'area' }); startReport(); await flush();
     const layer = q('.layer')!; layer.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); expect(q('.rect')!.style.display).toBe('block');
     layer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await flush(); expect(q('.sheet')).toBeTruthy();
   });
@@ -108,7 +115,7 @@ describe('accessibility', () => {
 
 describe('selecting a region', () => {
   it('a drag draws a box and a tap selects a usable area without a precise drag', async () => {
-    make({ selection: 'area' }); click('.feedback-start'); await flush();
+    make({ selection: 'area' }); startReport(); await flush();
     const layer = q('.layer')!;
     pointer(layer, 'pointerdown', 10, 10); pointer(layer, 'pointermove', 15, 15); pointer(layer, 'pointerup', 15, 15);
     await flush(); expect(q('.sheet')).toBeTruthy(); click('.preview-row .link');
@@ -117,8 +124,8 @@ describe('selecting a region', () => {
     expect(q('.sheet')).toBeTruthy(); expect(q<HTMLImageElement>('.preview')!.src).toContain('data:image/png');
   });
   it('Cancel and Escape leave without sending', async () => {
-    make({ selection: 'area' }); click('.feedback-start'); await flush(); click('.bar button:last-child'); expect(q('.layer')).toBeNull();
-    click('.feedback-start'); await flush(); q('.layer')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.layer')).toBeNull();
+    make({ selection: 'area' }); startReport(); await flush(); click('.bar button:last-child'); expect(q('.layer')).toBeNull();
+    startReport(); await flush(); q('.layer')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.layer')).toBeNull();
   });
   it('a capture failure shows a message and no layer', async () => {
     const onError = vi.fn(); make({ captureFn: async () => { throw new Error('nope'); }, onError }); click('.fab'); click('.menu .main'); await flush();

@@ -16,6 +16,48 @@ function freezeScrolled(): () => void {
   return () => undo.forEach(fn => fn());
 }
 
+/**
+ * html-to-image copies each element's computed style onto its clone. When the computed style has a `cssText` it writes it in
+ * one assignment; Chrome and Safari give an empty one, so it falls back to ~575 `setProperty` calls per element. On Safari each
+ * call is rechecked against the page's selectors that read inline styles (`:has(> .dot[style*="--red"])`), so a real app page
+ * took ~8.5 s per pass, twice, with the page locked (2026-11-18). While the capture runs, computed styles carry a `cssText`
+ * built from the same properties and the same value rules html-to-image applies on its fallback path.
+ */
+let patching = 0; // nested or overlapping captures share one patch: only the outermost restores the browser's function
+let browserGetComputedStyle: typeof window.getComputedStyle | null = null;
+export function withComputedCssText(): () => void {
+  // whichever capture finishes last puts the browser's function back
+  const release = () => { if (--patching === 0 && browserGetComputedStyle) { window.getComputedStyle = browserGetComputedStyle; browserGetComputedStyle = null; } };
+  if (patching++) return release;
+  const real = browserGetComputedStyle = window.getComputedStyle;
+  const names = Array.from(real.call(window, document.documentElement));
+  const textOf = (el: Element, cs: CSSStyleDeclaration) => {
+    let out = '';
+    for (const name of names) {
+      let value = cs.getPropertyValue(name);
+      if (name === 'font-size' && value.endsWith('px')) value = `${Math.floor(parseFloat(value)) - 0.1}px`; // html-to-image: avoids text re-wrapping
+      if (el instanceof HTMLIFrameElement && name === 'display' && value === 'inline') value = 'block';
+      if (name === 'd' && el.getAttribute('d')) value = `path(${el.getAttribute('d')})`;
+      if (value) out += `${name}: ${value}${cs.getPropertyPriority(name) ? ' !important' : ''}; `;
+    }
+    return out;
+  };
+  const patched = function (this: unknown, el: Element, pseudo?: string | null) {
+    const cs = real.call(window, el, pseudo);
+    // ::before/::after cost no style writes, and html-to-image quotes their `content` differently when a cssText exists
+    // (an image `content: url(...)` would turn into text): they keep the browser's own path.
+    if (pseudo || cs.cssText) return cs;
+    let text: string | null = null; // built only when html-to-image asks for it
+    return new Proxy(cs, { get(target, key) {
+      if (key === 'cssText') return text ??= textOf(el, target);
+      const v = Reflect.get(target, key, target);
+      return typeof v === 'function' ? v.bind(target) : v;
+    } });
+  };
+  window.getComputedStyle = patched as typeof window.getComputedStyle;
+  return release;
+}
+
 export type CaptureOptions = { maxPixelRatio?: number; exclude?: string[] };
 
 export async function captureViewport(opts: CaptureOptions = {}): Promise<string> {
@@ -32,8 +74,10 @@ export async function captureViewport(opts: CaptureOptions = {}): Promise<string
       return true;
     },
   };
-  const restore = freezeScrolled();
+  let restoreScroll = () => {}, restoreStyles = () => {};
+  const restore = () => { restoreStyles(); restoreScroll(); };
   try {
+    restoreScroll = freezeScrolled(); restoreStyles = withComputedCssText();
     // Safari draws images late on the first render; a short first pass warms its cache, the second one is kept.
     try { await toPng(document.body, options); } catch { /* the second pass reports the real error */ }
     await sleep(60);

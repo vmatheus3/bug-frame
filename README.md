@@ -6,7 +6,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 
 [![CI](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml/badge.svg)](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
-[![Download](https://img.shields.io/badge/download-v0.6.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.0)
+[![Download](https://img.shields.io/badge/download-v0.6.1-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.1)
 
 [Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Audit the whole site](#audit-the-whole-site-no-ai-tokens) · [Connect your agent](#new-tickets--your-coding-agent) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
 
@@ -56,7 +56,7 @@ node src/cli/bin.mjs doctor      # what works on this machine (Playwright, Claud
 ## How it works
 
 1. Sign in with your usual approved website account. **No extra Bugframe password or code is needed.**
-2. Tap **Leave feedback**. The visible screen is captured automatically.
+2. Tap the round bug button, then **Leave feedback**. The visible screen is captured automatically.
 3. Write what you want changed and tap **Send feedback**. That is the whole required form.
 4. Use **Pick a spot** to tap an element or drag a box when needed. Categories and wording fields live under **More options**.
 5. Developers review the request, deliver the change, and ask for approval. Customers choose **Looks good** or request an adjustment.
@@ -180,11 +180,11 @@ Existing `webhook: { url, secret }` integrations now keep delivery state with ea
 
 ## Add it to your own project
 
-Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.0).
+Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.1).
 This installation does not depend on a package named `bugframe` being published to the npm registry:
 
 ```bash
-npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.6.0/bugframe-0.6.0.tgz
+npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.6.1/bugframe-0.6.1.tgz
 # First connect your server-side login verifier as described under "Access control" below.
 npx bugframe serve --dir ./bug-reports --port 4455 --auth-module ./bugframe-auth.mjs
 ```

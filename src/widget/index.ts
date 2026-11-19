@@ -314,7 +314,7 @@ class Bugframe implements BugframeInstance {
     window.setTimeout(() => { if (this.phase === 'sent') { this.reset(); this.render(); this.restoreFocus(); } }, 2200);
   }
   private downloaded = false;
-  private restoreFocus() { const fab = this.root?.querySelector<HTMLElement>('.feedback-start'); fab?.focus(); }
+  private restoreFocus() { this.root?.querySelector<HTMLElement>('.fab')?.focus(); }
 
   private updateViewport() {
     const shell = this.root?.querySelector<HTMLElement>('.bf');
@@ -335,7 +335,9 @@ class Bugframe implements BugframeInstance {
     if (this.o.zIndex !== undefined) shell.style.setProperty('--bf-z', String(this.o.zIndex));
     root.append(shell);
     this.updateViewport();
-    if (['capturing', 'select', 'sheet', 'sending', 'sent'].includes(this.phase)) {
+    // Only an open form or selection locks the page. Taking the picture does not: the page stays usable while it runs
+    // (owner, 2026-11-18: "Analyze this page" froze the phone with a spinner and no end in sight).
+    if (['select', 'sheet', 'sending', 'sent'].includes(this.phase)) {
       if (this.modalOverflow === null) { this.modalOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
     } else this.unlockPage();
     this.wrap = null;
@@ -360,9 +362,9 @@ class Bugframe implements BugframeInstance {
     // Closing the popover returns focus to this round button, the one that opened it.
     const refocus = () => this.root?.querySelector<HTMLElement>('.fab')?.focus();
     fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else refocus(); });
-    const start = h('button', { type: 'button', class: 'feedback-start', disabled: busy }, icon(busy ? ICON_SPIN : ICON_BUG), t.button);
-    start.addEventListener('click', () => void this.begin());
-    wrap.append(start, fab);
+    // One round button only (owner, 2026-11-18): "Leave feedback" is the first item of its menu, so a second, wide button
+    // only covered the page (and phone menus).
+    wrap.append(fab);
     if (this.error && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'alert' }, this.error));
     else if (this.notice && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'status' }, this.notice));
     if (this.menu) wrap.append(this.renderMenu());

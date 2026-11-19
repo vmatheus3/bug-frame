@@ -59,7 +59,7 @@ try {
   await customer.locator('#accept').waitFor(); await capture(customer, 'customer-invitation.png');
   await customer.locator('#accept').click(); await customer.locator('#next').waitFor();
   await customer.goto(origin + '/review-demo?bugs=1&lang=en');
-  await customer.locator('.feedback-start').click();
+  await customer.locator('.fab').click(); await customer.getByRole('menuitem', { name: /Leave feedback/ }).click();
   await customer.locator('#bf-text').fill('Could we make this headline clearer?');
   await capture(customer, 'simple-feedback.png');
   await customer.getByRole('button', { name: 'Pick a spot' }).click();
@@ -93,7 +93,7 @@ try {
   await customer.locator('#approve').click(); await customer.getByRole('status').filter({ hasText: 'Approved. Thank you!' }).waitFor();
   await capture(customer, 'customer-approved.png');
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await customerContext.storageState(), locale: 'en-US', colorScheme: 'light' });
-  const phone = await phoneContext.newPage(); await phone.goto(origin + '/review-demo?bugs=1&lang=en'); await phone.locator('.feedback-start').click(); await phone.locator('#bf-text').fill('Please make this button easier to see.'); await capture(phone, 'mobile-feedback.png', false); await phoneContext.close();
+  const phone = await phoneContext.newPage(); await phone.goto(origin + '/review-demo?bugs=1&lang=en'); await phone.locator('.fab').click(); await phone.getByRole('menuitem', { name: /Leave feedback/ }).click(); await phone.locator('#bf-text').fill('Please make this button easier to see.'); await capture(phone, 'mobile-feedback.png', false); await phoneContext.close();
   // "Analyze this page": the developer queues a page analysis from the widget menu on a page with planted problems.
   await owner.goto(origin + '/plans?bugs=1&lang=en');
   await owner.locator('.fab').click(); await owner.locator('.menu .analyze').waitFor();
@@ -149,7 +149,7 @@ try {
   await reportContext.close();
   // One request that is still open, so the remote worklist and the agent connector have something to carry.
   await customer.goto(origin + '/review-demo?bugs=1&lang=en');
-  await customer.locator('.feedback-start').click();
+  await customer.locator('.fab').click(); await customer.getByRole('menuitem', { name: /Leave feedback/ }).click();
   await customer.locator('#bf-text').fill('The "Start a project" button is hard to find on a phone.');
   const queued = customer.waitForResponse(response => response.url().endsWith('/reports') && response.request().method() === 'POST');
   await customer.locator('.send').click(); await queued;

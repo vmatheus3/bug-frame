@@ -104,7 +104,7 @@ test('keyboard only: open, pick a region with the arrow keys, type, send', async
   await expect(page.locator('.sheet')).toBeVisible();
   await page.locator('textarea').fill('Keyboard report'); await page.keyboard.press('Escape');
   await expect(page.locator('.sheet')).toHaveCount(0);
-  await expect(page.locator('.feedback-start')).toBeFocused();
+  await expect(page.locator('.fab')).toBeFocused();
 });
 
 test('download mode: no backend, a .zip is saved and `bugframe import` reads it', async ({ page }) => {

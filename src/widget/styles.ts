@@ -13,8 +13,6 @@ button { font: inherit; color: inherit; }
 .fab-wrap.bottom-left { left: calc(var(--ix) + env(safe-area-inset-left, 0px)); bottom: calc(var(--iy) + env(safe-area-inset-bottom, 0px)); }
 .fab-wrap.top-right { right: calc(var(--ix) + env(safe-area-inset-right, 0px)); top: calc(var(--iy) + env(safe-area-inset-top, 0px)); }
 .fab-wrap.top-left { left: calc(var(--ix) + env(safe-area-inset-left, 0px)); top: calc(var(--iy) + env(safe-area-inset-top, 0px)); }
-.feedback-start { min-height:48px; display:flex; align-items:center; gap:10px; padding:10px 16px; border:0; border-radius:12px; background:var(--bf-accent); color:var(--bf-on-accent); font-weight:650; cursor:pointer; box-shadow:0 4px 14px rgba(10,14,24,.18); }
-.feedback-start svg { width:22px; height:22px; }
 .fab { position: relative; width: 48px; height: 48px; border-radius: 50%; border: 2px solid #fff; background: var(--bf-accent); color: var(--bf-on-accent); display: grid; place-items: center; box-shadow: 0 4px 14px rgba(10,14,24,.3); cursor: pointer; padding: 0; }
 .fab:focus-visible, .bf button:focus-visible, .bf textarea:focus-visible, .layer:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 .fab svg { width: 24px; height: 24px; }

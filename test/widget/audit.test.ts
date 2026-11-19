@@ -56,6 +56,18 @@ describe('page analysis menu item', () => {
     const notice = q('.toast')!; expect(notice.getAttribute('role')).toBe('status'); expect(notice.textContent).toContain('bugframe audit --watch');
   });
 
+  it('runs in the background: the page stays scrollable while the picture is taken, and the message says so', async () => {
+    // owner, 2026-11-18: "it starts spinning a wheel and the entire page is frozen ... I have no idea how long it's gonna take"
+    let release: (v: string) => void = () => {};
+    inst = init({ enable: 'always', endpoint: '/api/b', fetch: api('admin') as unknown as typeof fetch, captureFn: () => new Promise<string>(r => { release = r; }) }); await flush();
+    await openMenu(); q('.menu .analyze')!.click(); await flush();
+    expect(document.body.style.overflow).not.toBe('hidden'); // the page is usable while the picture is taken
+    expect(q('.fab svg.spin')).toBeTruthy(); expect(q('.sheet')).toBeNull();
+    release(PNG); await flush();
+    expect(document.body.style.overflow).not.toBe('hidden');
+    expect(q('.toast')!.textContent).toMatch(/background/i); expect(q('.toast')!.textContent).toMatch(/My requests/);
+  });
+
   it('a late access answer adds the item to an already open menu without rebuilding it', async () => {
     let answer: (r: Response) => void = () => {};
     const f = vi.fn((url: string) => url.endsWith('/access') ? new Promise<Response>(r => { answer = r; }) : Promise.resolve(jsonRes({ reports: [] })));

@@ -7,12 +7,13 @@ test('phone: one button, one message, and send stays above the keyboard', async 
   let payload: any;
   await page.route('**/api/bugframe/reports', route => route.request().method() === 'POST' ? (payload = route.request().postDataJSON(), route.fulfill({ status: 201, json: { id: 'bug-20261109-100000-aaaa', status: 'open' } })) : route.continue());
   await page.goto('/?bugs=1');
-  const primary = page.locator('.feedback-start'), chat = (await page.locator('#chat').boundingBox())!, vp = page.viewportSize()!;
+  await expect(page.locator('.feedback-start')).toHaveCount(0); // one round bug button, no wide button over the page
+  const primary = page.locator('.fab'), chat = (await page.locator('#chat').boundingBox())!, vp = page.viewportSize()!;
   const bounds = (await primary.boundingBox())!;
-  expect(bounds.width).toBeGreaterThan(100); expect(bounds.x + bounds.width).toBeLessThanOrEqual(vp.width);
+  expect(bounds.width).toBeLessThanOrEqual(56); expect(bounds.x + bounds.width).toBeLessThanOrEqual(vp.width);
   const overlap = !(bounds.x + bounds.width <= chat.x || chat.x + chat.width <= bounds.x || bounds.y + bounds.height <= chat.y || chat.y + chat.height <= bounds.y);
   expect(overlap).toBe(false);
-  await primary.click(); await expect(page.locator('.sheet')).toBeVisible();
+  await primary.click(); await page.getByRole('menuitem', { name: /Leave feedback/ }).click(); await expect(page.locator('.sheet')).toBeVisible();
   await expect(page.locator('.layer')).toHaveCount(0); await expect(page.locator('.extras')).not.toHaveAttribute('open');
   await expect(page.locator('.send')).toBeDisabled();
   await page.locator('#bf-text').fill('Please make this easier to read.');
@@ -31,7 +32,7 @@ test('phone: one button, one message, and send stays above the keyboard', async 
 test('phone: tap a spot without dragging and send the selected area', async ({ page }) => {
   let payload: any;
   await page.route('**/api/bugframe/reports', route => route.request().method() === 'POST' ? (payload = route.request().postDataJSON(), route.fulfill({ status: 201, json: { id: 'bug-20261109-100001-bbbb', status: 'open' } })) : route.continue());
-  await page.goto('/?bugs=1'); await page.locator('.feedback-start').click();
+  await page.goto('/?bugs=1'); await page.locator('.fab').click(); await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
   await page.getByRole('button', { name: 'Pick a spot' }).click();
   const box = (await page.locator('#total').boundingBox())!; await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.locator('.sheet')).toBeVisible();
@@ -48,4 +49,19 @@ test('phone: customer requests open as one clear screen with a back button', asy
   await expect(page.locator('#technical')).toBeHidden(); await expect(page.locator('#agent-panel')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: 'Voltar aos pedidos', exact: true }).click(); await expect(page.locator('main > aside')).toBeVisible();
+});
+
+test('phone: on an app page whose CSS matches inline styles, the form opens within 5 seconds', async ({ page }) => {
+  // Safari (every iPhone browser) took ~17 s on a real app page with selectors like `:has(> .dot[style*="--red"])`: each
+  // style write must be rechecked against them, and the screenshot wrote ~575 properties per element one at a time, with
+  // scrolling locked and nothing on screen (2026-11-18). One write per element fixes it.
+  await page.goto('/?bugs=1');
+  await page.evaluate(() => { const css = document.createElement('style'); css.textContent = '.tabs button:has(> .dot[style*="--red"]) b { color: red } [style*="grid-template-columns"] { gap: 4px } ' + Array.from({ length: 2_000 }, (_, i) => `.r${i} > .c${i % 97} { padding: ${i % 9}px }`).join('\n'); document.head.append(css); });
+  await page.evaluate(() => { const box = document.createElement('section'); for (let i = 0; i < 600; i++) { const d = document.createElement('div');
+    d.textContent = 'Row ' + i; d.style.cssText = 'padding:4px 8px;margin:2px;border:1px solid #ddd;border-radius:6px;font:14px/1.4 system-ui;color:#333;background:#fafafa'; box.append(d); }
+    document.body.prepend(box); });
+  await page.locator('.fab').click();
+  const t0 = Date.now(); await page.getByRole('menuitem', { name: /Leave feedback/ }).click();
+  await expect(page.locator('.sheet')).toBeVisible({ timeout: 5_000 });
+  expect(Date.now() - t0).toBeLessThan(5_000);
 });
