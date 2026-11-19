@@ -59,7 +59,7 @@ The Codex connector makes outbound authenticated requests only. It creates a ded
 
 Webhook delivery state is saved atomically with the original ticket and retried through the existing instance's mutation queue. HTTPS, redirect refusal, bounded timeouts, optional HMAC signatures over the full timestamped JSON, stable event IDs, and receiver deduplication are required for reliable integrations. Delivery status/heartbeat/retry routes are admin-only and disclose no credential or receiver URL. Heartbeats expire after missed checks; they do not grant customer reporting access. Persistent custom adapters must retain the delivery field; one API writer per project still applies.
 
-## Page analysis, site crawl and agent connectors (0.6.0, unreleased)
+## Page analysis, site crawl and agent connectors (0.6.0)
 
 - **The browser probe never changes the site it measures.** `bugframe audit` and `bugframe crawl` run only against local
   addresses unless `--allow-remote` is given. Every non-GET request is aborted; forms, beacons and WebTransport are

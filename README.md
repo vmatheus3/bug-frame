@@ -6,7 +6,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 
 [![CI](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml/badge.svg)](https://github.com/vmatheus3/bug-frame/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-c2410c.svg)](LICENSE)
-[![Download](https://img.shields.io/badge/download-v0.5.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0)
+[![Download](https://img.shields.io/badge/download-v0.6.0-c2410c.svg)](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.0)
 
 [Try locally](#5-minute-quick-start) · [Add to your app](#add-it-to-your-own-project) · [Audit the whole site](#audit-the-whole-site-no-ai-tokens) · [Connect your agent](#new-tickets--your-coding-agent) · [See the interface](docs/MOCKUPS.md) · [Contribute](#contributing)
 
@@ -180,11 +180,11 @@ Existing `webhook: { url, secret }` integrations now keep delivery state with ea
 
 ## Add it to your own project
 
-Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.5.0).
+Install the built package from the [GitHub release](https://github.com/vmatheus3/bug-frame/releases/tag/v0.6.0).
 This installation does not depend on a package named `bugframe` being published to the npm registry:
 
 ```bash
-npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.5.0/bugframe-0.5.0.tgz
+npm install https://github.com/vmatheus3/bug-frame/releases/download/v0.6.0/bugframe-0.6.0.tgz
 # First connect your server-side login verifier as described under "Access control" below.
 npx bugframe serve --dir ./bug-reports --port 4455 --auth-module ./bugframe-auth.mjs
 ```
@@ -612,7 +612,7 @@ It lists the queue, claims a request, measures the page on your machine and uplo
 an admin-only route (`PUT /reports/:id/audit.md`): page-analysis requests only, exactly those two names, Markdown text
 or JSON, at most 2 MB, refused for any other account, kind or file and for cross-origin browsers. It needs the private
 admin credential (`BUGFRAME_ADMIN_TOKEN` or the credential file, as for the other remote commands) and a server on
-0.6.0 (unreleased) or newer; with Next.js-style route files, export `PUT` next to `GET`, `POST` and `PATCH`.
+0.6.0 or newer; with Next.js-style route files, export `PUT` next to `GET`, `POST` and `PATCH`.
 
 **Local pages only.** The audit loads the page and clicks its controls, so it refuses any page that is not on your
 machine: only `localhost`, `*.localhost`, `*.test`, `127.0.0.0/8`, `::1` and `0.0.0.0` count as local. Private LAN
@@ -864,7 +864,7 @@ Translations, integration examples, documentation improvements, and fixes are we
 MIT, see [LICENSE](LICENSE). Bundles [html-to-image](https://github.com/bubkoo/html-to-image) (MIT), see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-### Upgrade to 0.6.0 (unreleased)
+### Upgrade from 0.5.x to 0.6.0
 
 Upgrade widget and server together. Nothing in stored reports changes. The widget's menu popover is now a dialog that
 contains a menu (was one menu); "Turn off" is a plain button. If you mount the API through route files (Next.js,

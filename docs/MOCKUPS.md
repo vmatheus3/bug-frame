@@ -1,6 +1,6 @@
 # Bugframe interface screenshots
 
-These images show the actual Bugframe 0.5.0 interface running in Chromium. They replace the earlier AI-generated mockups; no image generation or image editing is used for the current gallery. The Northstar Studio website, customer account, request, and developer notes are fictional demo content. No live accounts, credentials, invitation secrets, or customer reports appear in the images. Code, documentation, and images are available under the repository’s MIT license.
+These images show the actual Bugframe 0.6.0 interface running in Chromium. They replace the earlier AI-generated mockups; no image generation or image editing is used for the current gallery. The Northstar Studio website, customer account, request, and developer notes are fictional demo content. No live accounts, credentials, invitation secrets, or customer reports appear in the images. Code, documentation, and images are available under the repository’s MIT license.
 
 | File | What it shows |
 | --- | --- |

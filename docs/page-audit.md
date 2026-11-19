@@ -54,7 +54,7 @@ npx bugframe audit --watch --remote https://your-site.example/api/bugframe --pro
 
 It needs the private admin credential (`BUGFRAME_ADMIN_TOKEN`, or the credential file of the other remote commands;
 `--credentials FILE`), HTTPS (`--allow-localhost` permits HTTP to a loopback API for testing), and a server on 0.6.0
-(unreleased) or newer. What travels:
+or newer. What travels:
 
 | Step | Request | Limits on the server |
 |---|---|---|
