@@ -114,6 +114,11 @@ test('the command line helps: one command\'s help, a suggestion for a typo, alig
   } finally { await cleanup(dir); }
 });
 
+test('audit and crawl refuse Node.js below 20 with a clear message instead of loading Playwright', async () => {
+  const { loadPlaywright } = await import('../../src/cli/audit/probe.mjs');
+  await assert.rejects(loadPlaywright(undefined, '18.20.8'), /Audit and crawl need Node\.js 20 or newer \(you have 18\.20\.8\)/);
+});
+
 test('doctor says what works on this machine and how to get the rest, without failing', async () => {
   const { doctor } = await import('../../src/cli/doctor.mjs');
   const dir = await tmpDir();
@@ -124,11 +129,19 @@ test('doctor says what works on this machine and how to get the rest, without fa
     assert.match(all, /ok +Playwright 1\.64\.1 with Chromium/); assert.match(all, /ok +Claude Code/); assert.doesNotMatch(all, /missing|problem/);
     const bare = await doctor({ dir: join(dir, 'nope'), node: '18.0.0', onPath: () => false, playwright: async () => null });
     assert.match(bare, /problem +Node\.js 18\.0\.0: Bugframe needs 18\.17 or newer/);
-    assert.match(bare, /missing +Playwright: needed for audit and crawl\. Install it with: npm i -D playwright && npx playwright install chromium/);
+    assert.match(bare, /problem +Playwright: audit and crawl need Node\.js 20 or newer/);
+    const noPw = await doctor({ dir, node: '20.11.0', onPath: () => false, playwright: async () => null });
+    assert.match(noPw, /missing +Playwright: needed for audit and crawl\. Install it with: npm i -D playwright && npx playwright install chromium/);
     assert.match(bare, /missing +Claude Code \(claude\): .*--agent none/);
     assert.match(bare, /missing +Reports folder .*nope: it is created by the first report/);
     const old = await doctor({ dir, node: '22.3.0', onPath: () => true, playwright: async () => ({ version: '1.40.0', chromium: false }) });
     assert.match(old, /problem +Playwright 1\.40\.0: audit and crawl need 1\.48 or newer/);
+    // Playwright exits the whole process on Node.js below 20, so doctor must not even load it there.
+    let loaded = false;
+    const node18 = await doctor({ dir, node: '18.20.8', onPath: () => true, playwright: async () => { loaded = true; return { version: '1.64.1', chromium: true }; } });
+    assert.equal(loaded, false, 'Playwright is never loaded on Node.js 18');
+    assert.match(node18, /ok +Node\.js 18\.20\.8/);
+    assert.match(node18, /problem +Playwright: audit and crawl need Node\.js 20 or newer \(you have 18\.20\.8\)/);
     assert.match(await run(dir, 'doctor'), /Node\.js/);
   } finally { await cleanup(dir); }
 });

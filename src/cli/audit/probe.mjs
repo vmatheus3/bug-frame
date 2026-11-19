@@ -89,7 +89,13 @@ export function redactUrl(u) {
 export const pathOf = (u, origin) => { try { const x = new URL(u); return x.origin === origin ? x.pathname : x.origin + x.pathname; } catch { return '(invalid url)'; } };
 export const scrub = text => String(text ?? '').replace(/([?&][^=\s&#]*(?:token|key|secret|pass|auth|code|session|sig)[^=\s&#]*=)[^&\s#'"]+/gi, '$1REDACTED').slice(0, 500);
 
-export async function loadPlaywright(project) {
+/** Playwright exits the whole process on Node.js below 20, so check before importing it. */
+export const PLAYWRIGHT_MIN_NODE = 20;
+export const playwrightNodeProblem = (node = process.versions.node) => Number(String(node).split('.')[0]) < PLAYWRIGHT_MIN_NODE ? `audit and crawl need Node.js ${PLAYWRIGHT_MIN_NODE} or newer (you have ${node}); Playwright does not run on older versions` : '';
+
+export async function loadPlaywright(project, node = process.versions.node) {
+  const problem = playwrightNodeProblem(node);
+  if (problem) throw new CliError(`${problem[0].toUpperCase()}${problem.slice(1)}.`);
   const specs = [];
   if (project) {
     try { const req = createRequire(join(resolve(project), 'package.json')); for (const n of ['playwright', '@playwright/test']) { try { specs.push(pathToFileURL(req.resolve(n)).href); } catch { /* not installed there */ } } } catch { /* no package.json */ }

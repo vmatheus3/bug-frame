@@ -27,7 +27,7 @@ Open-source website feedback for humans and coding agents. Capture a screenshot,
 
 ## 5-minute quick start
 
-Try the complete widget and server locally with Node.js 20+ (the runtime server/CLI also support 18.17+):
+Try the complete widget and server locally with Node.js 20+ (the runtime server/CLI also support 18.17+; `audit` and `crawl` need Node.js 20+ because Playwright does):
 
 ```bash
 git clone https://github.com/vmatheus3/bug-frame.git

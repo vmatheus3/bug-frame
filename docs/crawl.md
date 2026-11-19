@@ -124,7 +124,7 @@ The crawl uses the same guard code as `bugframe audit`:
   came from. Files a page loads from other hosts (fonts, scripts, images from a CDN) load normally.
 - **No writes:** every non-GET/HEAD request is aborted and recorded; form submissions are cancelled (and recorded as
   `FORM POST <action>` when the form has an action or uses POST); `navigator.sendBeacon` and WebTransport send
-  nothing; downloads, popups and service workers are off. Playwright 1.48+ is required. **GET requests fired by a
+  nothing; downloads, popups and service workers are off. Playwright 1.48+ and Node.js 20+ are required (Playwright does not run on Node.js 18). **GET requests fired by a
   click are sent** (the crawl cannot know what a GET does on a server), with one exception below.
 - **No sockets, in workers either:** WebSockets are closed before they reach the server in pages and iframes
   (Playwright's routing) and in dedicated Web Workers, which that routing does not reach: a worker created from a URL,

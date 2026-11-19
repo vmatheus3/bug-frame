@@ -120,7 +120,7 @@ machine: `--base-url` points the captured live URL at your local server, and the
    `_bugframe_audit/probe.json`, `screens/<viewport>-<scheme>.png`, `clicks/c<n>.png`.
 
    **Click probe safety.** Every non-GET/HEAD request is aborted and recorded; WebSocket connections are closed before
-   they reach the server (`routeWebSocket`, so Playwright 1.48 or newer is required) and recorded as `WEBSOCKET`, in
+   they reach the server (`routeWebSocket`, so Playwright 1.48 or newer and Node.js 20 or newer are required) and recorded as `WEBSOCKET`, in
    pages and iframes and also in dedicated Web Workers, which that routing does not reach: a worker (from a URL, a blob
    or a data URL) starts behind a stub that fails its sockets and reports them, and its own requests pass the same
    guard. A SharedWorker and a worker started by a worker are not started (`SHAREDWORKER`, `WORKER`), because their

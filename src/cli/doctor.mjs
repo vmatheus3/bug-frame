@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { ID_RE } from '../server/util.mjs';
 import { shown } from './commands.mjs';
-import { loadPlaywright } from './audit/probe.mjs';
+import { loadPlaywright, playwrightNodeProblem } from './audit/probe.mjs';
 import { onPath as findOnPath } from './audit/runner.mjs';
 
 /** The installed Playwright: { version, chromium: is its browser downloaded } or null when it cannot be loaded. */
@@ -29,8 +29,10 @@ export async function doctor({ dir = './bug-reports', project, node = process.ve
   const folder = resolve(dir);
   try { const n = (await readdir(folder)).filter(name => ID_RE.test(name)).length; add('ok', `Reports folder ${shown(folder)}: ${n} report${n === 1 ? '' : 's'}`); }
   catch { add('missing', `Reports folder ${shown(folder)}: it is created by the first report (or point --dir / BUGFRAME_DIR at the right one)`); }
-  const pw = await playwright(project).catch(() => null);
-  if (!pw) add('missing', 'Playwright: needed for audit and crawl. Install it with: npm i -D playwright && npx playwright install chromium');
+  const nodeProblem = playwrightNodeProblem(node);
+  const pw = nodeProblem ? null : await playwright(project).catch(() => null);
+  if (nodeProblem) add('problem', `Playwright: ${nodeProblem}`);
+  else if (!pw) add('missing', 'Playwright: needed for audit and crawl. Install it with: npm i -D playwright && npx playwright install chromium');
   else if (older(pw.version, '1.48')) add('problem', `Playwright ${pw.version}: audit and crawl need 1.48 or newer (they must block WebSockets). Update it with: npm i -D playwright@latest`);
   else if (!pw.chromium) add('problem', `Playwright ${pw.version}: its Chromium is not downloaded. Run: npx playwright install chromium`);
   else add('ok', `Playwright ${pw.version} with Chromium (audit, crawl)`);
