@@ -1,5 +1,6 @@
 import { languageUI } from './ui.js';
 import { reportMarkdown } from './export.js';
+import { renderMarkdown } from './markdown.js';
 const $ = id => document.getElementById(id);
 const config = JSON.parse(document.body.dataset.config);
 const { apiBase, customer, basePath, siteUrl, invitations } = config;
@@ -9,7 +10,7 @@ $('agent-panel').hidden = customer;
 document.body.dataset.view = customer ? 'customer' : 'developer';
 const quote = value => "'" + value.replace(/'/g, "'\"'\"'") + "'";
 $('agent-command').value = `npx bugframe connect codex --remote ${quote(location.origin + apiBase)} --project .${location.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? ' --allow-localhost' : ''}`;
-let selectedId, selectedReport, rows = [], invitationRows = [], createdInvitation, lastMessage, agentStatus, generation = 0;
+let selectedId, selectedReport, rows = [], invitationRows = [], createdInvitation, lastMessage, agentStatus, generation = 0, auditSource = '';
 const images = new Map();
 let visibleRows = [];
 const terminalStatuses = new Set(['approved', 'fixed', 'wontfix']);
@@ -31,7 +32,7 @@ const clearPrivateContent = () => {
   delete document.body.dataset.detailOpen; $('back-to-requests').hidden = true;
   generation++; agentStatus = null; $('agent-status').textContent = ''; $('delivery-status').textContent = ''; selectedId = null; selectedReport = null; rows = []; invitationRows = []; createdInvitation = null; releaseImages(); $('detail').hidden = true; $('reports').replaceChildren();
   for (const id of ['description', 'info', 'context', 'resolution', 'customer-note', 'current-text', 'suggested-text', 'invite-expiry', 'audit-text']) $(id).textContent = '';
-  $('audit-panel').hidden = true;
+  $('audit-panel').hidden = true; $('copy-audit').hidden = true; auditSource = '';
   for (const id of ['note', 'adjustment', 'invite-link', 'invite-email']) $(id).value = '';
   $('invitations').replaceChildren(); $('activity').replaceChildren(); $('invite-result').hidden = true;
   visibleRows = []; $('export-preview').value = ''; $('export-fallback').hidden = true; $('copy-report').hidden = true; $('report-count').textContent = ''; $('no-results').hidden = true;
@@ -129,12 +130,13 @@ async function show(id) {
   $('technical').hidden = customer; $('status-form').hidden = customer;
   $('status').value = report.status; $('note').value = report.note; $('save').disabled = report.status === 'approved';
   $('wording').hidden = report.kind !== 'content';
-  // Page analysis: the markdown is shown as plain text (textContent), never parsed into HTML.
-  $('audit-panel').hidden = customer || report.kind !== 'audit'; $('audit-text').textContent = ''; $('audit-waiting').hidden = Boolean(report.files?.audit);
+  // Page analysis: the report quotes text from the audited page, so it is untrusted. renderMarkdown builds headings,
+  // tables and lists with createElement and text nodes only; nothing in it is ever parsed as HTML or made a link.
+  $('audit-panel').hidden = customer || report.kind !== 'audit'; $('audit-text').replaceChildren(); auditSource = ''; $('copy-audit').hidden = true; $('audit-waiting').hidden = Boolean(report.files?.audit);
   if (!customer && report.kind === 'audit' && report.files?.audit) {
     const text = await (await request(`/reports/${encodeURIComponent(id)}/audit.md`)).text();
     if (selectedId !== id || version !== generation) return;
-    $('audit-text').textContent = text;
+    auditSource = text; $('audit-text').replaceChildren(renderMarkdown(text, document, { tableLabel: t('auditTable') })); $('copy-audit').hidden = false;
   }
   $('review-form').hidden = !customer || report.status !== 'ready_for_review'; $('adjustment').value = '';
   for (const name of ['region', 'full']) {
@@ -232,6 +234,14 @@ $('copy-report').addEventListener('click', async () => {
     }
   } catch (error) { showError(error); }
   finally { $('copy-report').disabled = false; }
+});
+// The analysis as the Markdown it was written in, for a coding agent.
+$('copy-audit').addEventListener('click', async () => {
+  if (customer || !auditSource) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(auditSource); message('auditCopied');
+  } catch { $('export-preview').value = auditSource; $('export-fallback').hidden = false; $('export-preview').focus(); $('export-preview').select(); message('copyFailed'); }
 });
 $('refresh').addEventListener('click', () => { message(''); void reload().catch(showError); });
 window.addEventListener('pagehide', clearPrivateContent);

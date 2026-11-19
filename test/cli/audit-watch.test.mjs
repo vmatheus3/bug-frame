@@ -110,3 +110,38 @@ test('storage without writeAttachment degrades to a note-only result', async () 
     assert.match(r.note, /only this note was saved/); assert.match(r.note, /1 high/);
   } finally { await cleanup(src); }
 });
+
+test('watch mode over --remote: the analysis is listed, claimed, uploaded and handed back through the hosted API, and failures stop at the limit', async () => {
+  const { createBugframe } = await import('../../src/server/index.mjs');
+  const { createRemoteStorage } = await import('../../src/cli/remote.mjs');
+  const { auditCommand } = await import('../../src/cli/audit/index.mjs');
+  const { body, post } = await import('../helpers.mjs');
+  const src = await project(), seen = [], endpoint = 'https://example.test/api/bugframe', token = 'private-test-credential';
+  const bf = createBugframe({ basePath: '/api/bugframe', storage: createMemoryStorage(), rateLimit: false, adminToken: token });
+  const calls = [], request = (url, options = {}) => { calls.push(`${options.method ?? 'GET'} ${new URL(url).pathname.replace('/api/bugframe', '')}`); return bf.handle(new Request(url, { method: options.method, headers: options.headers, body: options.body })); };
+  try {
+    const create = async over => (await (await bf.handle(post(`${endpoint}/reports`, body(over), { authorization: `Bearer ${token}` }))).json()).id;
+    const id = await create({ kind: 'audit', description: 'Page analysis requested', context: { url: 'https://prod.example/settings?tab=1' } }), other = await create({ description: 'Typo' });
+    const storage = createRemoteStorage({ endpoint, token, fetch: request });
+    assert.equal(await watchAudits({ storage, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'none', probe: fakeProbe(seen), ...quiet }), 1);
+    assert.deepEqual(seen.map(s => s.url), ['http://localhost:4320/settings?tab=1'], 'the captured live URL is measured on the local server');
+    const r = await bf.storage.get(id);
+    assert.equal(r.status, 'ready_for_review'); assert.equal(r.reviewVersion, 1); assert.equal(r.files.audit, 'audit.md');
+    assert.match(r.note, /^Page analysis: 1 high\. Top: F1 .*Full report: audit\.md\.$/);
+    assert.deepEqual(r.activity.map(a => a.status), ['in_progress', 'ready_for_review'], 'one history entry per step, written by the server');
+    assert.equal(r.audit.attempts, 1); assert.deepEqual(r.audit.counts, { blocker: 0, high: 1, medium: 0, low: 0 });
+    assert.ok(validateAuditMarkdown((await bf.storage.readFile(id, 'audit.md')).toString()).ok);
+    assert.equal(JSON.parse((await bf.storage.readFile(id, 'audit.json')).toString()).agent, 'none');
+    assert.equal((await bf.storage.get(other)).status, 'open');
+    assert.deepEqual(calls.filter(c => !c.startsWith('GET')), [`PATCH /reports/${id}`, `PUT /reports/${id}/audit.md`, `PUT /reports/${id}/audit.json`, `PATCH /reports/${id}`]);
+    // A failing page: back to open with the reason, at most MAX_ATTEMPTS tries, nothing uploaded.
+    const failing = await create({ kind: 'audit', description: 'Page analysis requested', context: { url: 'https://prod.example/broken' } });
+    for (let i = 0; i <= MAX_ATTEMPTS; i++) await watchAudits({ storage, once: true, project: src, baseUrl: 'http://localhost:4320', agent: 'none', probe: fakeProbe(seen, { fail: true }), ...quiet });
+    const f = await bf.storage.get(failing);
+    assert.equal(f.status, 'open'); assert.equal(f.audit.attempts, MAX_ATTEMPTS); assert.match(f.note, /Page analysis failed .*page did not load Not retrying/);
+    assert.equal(await bf.storage.readFile(failing, 'audit.md'), null);
+    // The command line: --remote needs --watch, never mixes with --dir, and reads the private credential, not a flag.
+    await assert.rejects(auditCommand('http://localhost:3000/', { remote: endpoint, project: src }, './bug-reports'), /--remote works with audit --watch/);
+    await assert.rejects(auditCommand(undefined, { remote: endpoint, watch: true, dir: './x', project: src }, './x'), /--remote and --dir cannot be combined/);
+  } finally { await bf.close(); await cleanup(src); }
+});

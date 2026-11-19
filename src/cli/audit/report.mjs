@@ -54,7 +54,7 @@ export function summaryNote(md, { degraded = false } = {}) {
   return { note: note.slice(0, 2000), counts };
 }
 
-const FIXES = {
+export const FIXES = {
   'horizontal-overflow': 'Constrain the offending element at this width (max-width: 100%; min-width: 0 on flex/grid children; overflow-wrap: anywhere for long words) instead of hiding the overflow on body.',
   'clipped-text': 'Let the container grow (remove the fixed height/width or overflow: hidden) or truncate deliberately with text-overflow: ellipsis and a title.',
   offscreen: 'Bring the element back into the viewport at this width (check absolute positioning, negative margins and transforms).',

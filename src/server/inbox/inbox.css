@@ -133,6 +133,32 @@ label { display: grid; gap: 6px; font-size: 12px; font-weight: 600; }
 #invite-result { margin-top: 18px; }
 #invite-expiry { display: block; margin-top: 8px; color: var(--muted); }
 pre { overflow: auto; max-height: 500px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; padding: 16px; border-radius: 6px; background: var(--surface); }
+/* A report rendered from Markdown (page analysis). Built from text nodes only; see inbox/markdown.js. */
+.markdown { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 8px; }
+.markdown h3 { font-size: 18px; letter-spacing: -.02em; margin: 22px 0 8px; }
+.markdown h4 { font-size: 15px; margin: 22px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.markdown h5 { font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 20px 0 6px; }
+.markdown h6 { font-size: 14px; margin: 18px 0 6px; }
+.markdown p { margin: 8px 0; }
+.markdown ul, .markdown ol { margin: 6px 0 12px; padding-left: 20px; display: grid; gap: 4px; }
+.markdown code { font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.markdown blockquote { margin: 12px 0; padding: 8px 14px; border-left: 3px solid var(--line); color: var(--muted); }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
+.md-table { overflow-x: auto; margin: 12px 0 16px; border: 1px solid var(--line); border-radius: 8px; }
+.md-table:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.md-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.md-table th, .md-table td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); overflow-wrap: normal; word-break: normal; }
+.md-table th { font-size: 11px; font-weight: 700; color: var(--muted); background: var(--surface); white-space: nowrap; }
+.md-table tr:last-child td { border-bottom: 0; }
+.md-table td:last-child { min-width: 90px; }
+.sev { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; border-radius: 999px; padding: 1px 9px; color: var(--sev-ink, var(--muted)); background: var(--sev-bg, var(--surface)); white-space: nowrap; }
+.sev[data-sev=blocker] { --sev-ink: #fff; --sev-bg: #a3220f; }
+.sev[data-sev=high] { --sev-ink: #a3220f; --sev-bg: #fdebe7; }
+.sev[data-sev=medium] { --sev-ink: #7a5200; --sev-bg: #fdf2d6; }
+.sev[data-sev=low] { --sev-ink: #2f5387; --sev-bg: #e8effa; }
+#copy-audit { font-size: 12px; margin: 8px 0 4px; background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+#copy-audit::before { content: "\2197"; margin-right: 8px; }
 dt { font-size: 12px; color: var(--muted); font-weight: 650; }
 dd { margin: 6px 0 20px; padding-left: 12px; border-left: 2px solid var(--line); }
 #back-to-requests { margin-bottom: 20px; }
@@ -184,5 +210,8 @@ body[data-view=customer] #site-link { color: var(--accent); }
   :root { --ink: #f0ede8; --muted: #aca69d; --bg: #171715; --card: #20201d; --surface: #292823; --line: #3a3832; --accent: #f49b70; --accent-soft: #39291f; --focus: #f49b70; --success: #9ad4b3; --success-soft: #25372c; --shadow: none; }
   #save, #approve, #accept, #create-invite { background: #b83d12; border-color: #b83d12; color: #fff; }
   .request-status[data-status=in_progress], .request-status[data-status=ready_for_review] { color: #e6ca6a; background: #39331f; }
+  .sev[data-sev=high] { --sev-ink: #ff9c8a; --sev-bg: #3a1d18; }
+  .sev[data-sev=medium] { --sev-ink: #e6ca6a; --sev-bg: #39331f; }
+  .sev[data-sev=low] { --sev-ink: #a8c4f0; --sev-bg: #1d2838; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

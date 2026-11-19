@@ -58,3 +58,28 @@ The normal setup reuses the site's real session verifier and explicit approved-u
 The Codex connector makes outbound authenticated requests only. It creates a dedicated notification inbox with read-only acknowledgment turns, passes only validated ticket IDs/canonical kinds, and removes Bugframe credential environment variables from its Codex child. It does not interpret report descriptions as prompts or approve coding actions. State/checkpoint files are private; do not run multiple listeners on the same checkpoint or remove an active lock. Notifications may repeat if a process crashes after Codex acknowledges but before the checkpoint is committed. Keep account limits and shared project trust in mind when enabling automated turns.
 
 Webhook delivery state is saved atomically with the original ticket and retried through the existing instance's mutation queue. HTTPS, redirect refusal, bounded timeouts, optional HMAC signatures over the full timestamped JSON, stable event IDs, and receiver deduplication are required for reliable integrations. Delivery status/heartbeat/retry routes are admin-only and disclose no credential or receiver URL. Heartbeats expire after missed checks; they do not grant customer reporting access. Persistent custom adapters must retain the delivery field; one API writer per project still applies.
+
+## Page analysis, site crawl and agent connectors (0.6.0, unreleased)
+
+- **The browser probe never changes the site it measures.** `bugframe audit` and `bugframe crawl` run only against local
+  addresses unless `--allow-remote` is given. Every non-GET request is aborted; forms, beacons and WebTransport are
+  stopped; WebSockets are blocked in pages, iframes and dedicated Web Workers (a worker starts behind a stub that fails
+  its sockets); SharedWorkers and workers started by a worker are not started at all, because Playwright cannot route
+  their requests; service workers, downloads and popups are off. Navigations and the page's own requests (fetch, XHR,
+  worker scripts) are fetched one hop at a time, so a redirect to another site or to a destructive-looking URL is
+  refused before anything is requested there. Controls,
+  links and (once a click was dispatched) API calls whose label or URL looks destructive or session-ending are never
+  clicked, opened or sent. If the guard itself fails on a request, the request is aborted. Limits: GET requests a click
+  fires to other URLs are sent (the probe cannot know what a GET does on a server), EventSource streams follow their
+  redirects in the browser (an endless stream cannot be fetched hop by hop), and the word list covers English,
+  Portuguese and Spanish only; use a test account and data you can lose.
+- **Page-analysis results are untrusted text.** `audit.md` quotes the audited page. The inbox renders it from text
+  nodes with a fixed tag list, takes no attribute from it and never makes a link or image live; the API serves it as
+  `text/markdown` with `nosniff` and a sandboxing CSP. `PUT /reports/:id/audit.md|audit.json` (for
+  `bugframe audit --watch --remote`) accepts an administrator only, a page-analysis request only, those two names only,
+  valid UTF-8 text or JSON up to 2 MB, and is not offered to cross-origin browsers.
+- **A remote worklist is customer data on disk.** `bugframe --remote … export` writes screenshots and report JSON to a
+  private folder (`0700`/`0600`); keep it out of version control and delete it when the work is done.
+- **`connect agent` passes ids, not text.** Your command receives validated ticket ids and kinds only. It runs with
+  your user's rights in the project folder and without Bugframe's credential in its environment; what the command does
+  with the ids, and which access it has to read the tickets, is yours to decide.

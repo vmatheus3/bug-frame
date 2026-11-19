@@ -43,5 +43,5 @@ console.log('Bugframe is private. Use the website login, and mount /api/bugframe
   if (!authModule) await writeFile(join(folder, 'auth.mjs'), '// Connect the real website session verifier here. Login alone is not reporting permission.\nexport async function authorize(request) { return null; }\n', { flag: 'wx', mode: 0o600 });
   await writeFile(join(folder, 'AGENT_SETUP.md'), guide, { flag: 'wx', mode: 0o600 });
 
-  return `Created .bugframe/ with private setup files. Customers use the website login; no extra Bugframe password.\nAsk Codex to follow .bugframe/AGENT_SETUP.md to connect the existing session verifier and routes.\nThen keep this running:\n${command}`;
+  return `Created .bugframe/ with private setup files. Customers use the website login; no extra Bugframe password.\nAsk your coding agent (Codex, Claude Code or another) to follow .bugframe/AGENT_SETUP.md to connect the existing session verifier and routes.\nThen keep this running to hear about new requests in Codex:\n${command}\nFor any other agent or script, the same with: connect agent … --agent-cmd "COMMAND" (see bugframe help connect).`;
 }

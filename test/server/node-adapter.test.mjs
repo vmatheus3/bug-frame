@@ -59,3 +59,22 @@ test('proxy headers affect IP and protocol only when the adapter explicitly trus
     } finally { server.close(); }
   }
 });
+
+test('every adapter carries the page-analysis upload (PUT): the Node listener over real HTTP and the route handlers', async () => {
+  const { routeHandlers } = await import('../../src/server/index.mjs');
+  const dir = await tmpDir();
+  const bf = createBugframe({ dir, adminToken: 'adm', rateLimit: false });
+  const server = createServer(toNodeListener(bf)); const port = await listen(server);
+  try {
+    const base = `http://127.0.0.1:${port}`, admin = { authorization: 'Bearer adm' };
+    const { id } = await (await fetch(`${base}/reports`, { method: 'POST', headers: { 'content-type': 'application/json', ...admin }, body: JSON.stringify(body({ kind: 'audit', description: 'Page analysis requested' })) })).json();
+    const put = await fetch(`${base}/reports/${id}/audit.md`, { method: 'PUT', headers: { 'content-type': 'text/markdown', ...admin }, body: '# Page audit: http://localhost/\n' });
+    assert.equal(put.status, 200);
+    assert.equal(await (await fetch(`${base}/reports/${id}/audit.md`, { headers: admin })).text(), '# Page audit: http://localhost/\n');
+    assert.equal((await fetch(`${base}/reports/${id}/audit.md`, { method: 'PUT', headers: { 'content-type': 'text/markdown', ...admin }, body: 'x'.repeat(2 * 1024 * 1024 + 10) })).status, 413, 'the size limit holds for a streamed body');
+    const handlers = routeHandlers(bf);
+    assert.deepEqual(Object.keys(handlers).sort(), ['GET', 'OPTIONS', 'PATCH', 'POST', 'PUT']);
+    const viaRoute = await handlers.PUT(new Request(`${base}/reports/${id}/audit.json`, { method: 'PUT', headers: { 'content-type': 'application/json', ...admin }, body: '{"ok":true}' }));
+    assert.equal(viaRoute.status, 200);
+  } finally { server.close(); server.closeAllConnections?.(); await bf.close(); await cleanup(dir); }
+});

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { createBugframe, createInbox, toNodeListener } from '../../src/server/index.mjs';
+import { studioPage } from './studio.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 4455);
@@ -67,6 +68,12 @@ const server = createServer(async (req, res) => {
     return redirect(res);
   }
   if (req.method !== 'GET') { res.writeHead(405); return res.end('Method not allowed'); }
+  if (path === '/studio' || path.startsWith('/studio/')) {
+    // A fictional multi-page dashboard for `bugframe crawl` (see studio.mjs); its API routes only exist as blocked writes.
+    const html = studioPage(path);
+    res.writeHead(html ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(html ?? '<!doctype html><title>Not found · Northstar Studio</title><h1>Page not found</h1>');
+  }
   const hit = assets[path];
   if (!hit) { res.writeHead(404); return res.end('Not found'); }
   try {

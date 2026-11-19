@@ -10,6 +10,39 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { remoteCommand } from './remote.mjs';
 import { CliError } from './commands.mjs';
 import { ID_RE } from '../server/util.mjs';
+import { runProcess } from './audit/runner.mjs';
+
+const KINDS = ['bug', 'content', 'design', 'idea', 'audit'];
+/**
+ * Any other agent or script as the receiver (`bugframe connect agent --agent-cmd "…"`): the command runs once per batch
+ * of new tickets, in the project folder, with the validated ticket ids and canonical kinds as JSON on stdin and in
+ * BUGFRAME_REPORT_IDS / BUGFRAME_REPORT_COUNT / BUGFRAME_API. It never gets a customer's text (untrusted, it stays in
+ * Bugframe) or the private credential. Exit code 0 acknowledges the batch; anything else keeps it queued.
+ */
+export class AgentCommandClient {
+  constructor({ command, project, timeoutMs = 600_000, run = runProcess, say = text => console.log(text), signal } = {}) { Object.assign(this, { command: String(command ?? ''), project, timeoutMs, run, say, signal, label: 'The agent command' }); }
+  async initialize() { if (!this.command.trim()) throw new CliError('Give the command to run for new tickets: --agent-cmd "COMMAND".'); }
+  async inbox() { return 'agent-command'; }
+  async notify(_thread, reports, endpoint) {
+    const list = reports.map(report => ({ id: report.id, kind: KINDS.includes(report.kind) ? report.kind : 'feedback' }));
+    try {
+      // `signal` (Ctrl+C) kills the command's whole process group, so a shell and the agent it started stop too.
+      const output = await this.run(this.command, [], { cwd: this.project, shell: true, timeoutMs: this.timeoutMs, signal: this.signal, input: `${JSON.stringify({ endpoint, reports: list })}\n`,
+        env: { BUGFRAME_REPORT_IDS: list.map(report => report.id).join(' '), BUGFRAME_REPORT_COUNT: String(list.length), BUGFRAME_API: endpoint } });
+      // What the command printed, for the person watching the listener (it is their own command's output).
+      if (output.trim()) this.say(output.trim().slice(0, 4000));
+    } catch (cause) {
+      if (this.signal?.aborted) {
+        this.say(`Stopped the agent command that was running for ${list.map(report => report.id).join(', ')}. Those tickets stay queued and are sent again on the next run.`);
+        throw new CliError('Stopped.');
+      }
+      const detail = /exited with code (\d+)/.exec(String(cause?.message))?.[1];
+      const error = new CliError(`The agent command did not finish successfully (${detail ? `exit code ${detail}` : /did not finish within/.test(String(cause?.message)) ? 'timed out' : 'could not run'}). These tickets stay queued and are sent again.`);
+      error.retryable = true; throw error;
+    }
+  }
+  close() {}
+}
 
 export class CodexClient {
   constructor({ command = 'codex', args = ['app-server'], timeoutMs = 30000, spawn: start = spawn } = {}) {
@@ -113,7 +146,8 @@ export async function connectCodex({ endpoint, token, project = process.cwd(), s
       try { await response.body?.cancel(); } catch { /* already closed */ }
     });
     client = clientFactory(); await client.initialize();
-    log('Connected to Codex. Keep this listener running to receive new requests.');
+    const label = client.label ?? 'Codex';
+    log(label === 'Codex' ? 'Connected to Codex. Keep this listener running to receive new requests.' : 'Listening for new requests. Keep this listener running; your command runs for each batch of new tickets.');
     let failures = 0;
     do {
       if (signal?.aborted) break;
@@ -131,7 +165,7 @@ export async function connectCodex({ endpoint, token, project = process.cwd(), s
           const batch = fresh.slice(offset, offset + 20); await client.notify(state.threadId, batch, endpoint);
           for (const report of batch) seen.add(report.id); state.seen = [...seen]; await save();
           await ping({ intervalMs, threadId: state.threadId });
-          log(`Codex notified: ${batch.map(report => report.id).join(', ')}. Inbox: ${state.threadId}`);
+          log(label === 'Codex' ? `Codex notified: ${batch.map(report => report.id).join(', ')}. Inbox: ${state.threadId}` : `${label} ran for: ${batch.map(report => report.id).join(', ')}.`);
         }
       }
       }
@@ -139,6 +173,7 @@ export async function connectCodex({ endpoint, token, project = process.cwd(), s
       const active = reports.filter(report => seen.has(report.id)).map(report => report.id); if (JSON.stringify(active) !== JSON.stringify(state.seen)) { state.seen = active; await save(); }
       failures = 0;
       } catch (error) {
+        if (signal?.aborted) break; // stopped (Ctrl+C) mid-batch: the client said what it interrupted
         if (once || !error.retryable) throw error;
         failures++; if (failures === 1) log('Bugframe is temporarily unavailable. The listener will retry; pending notices stay queued.');
       }

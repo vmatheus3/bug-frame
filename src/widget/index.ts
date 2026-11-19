@@ -13,6 +13,8 @@ export { resolveStrings, LOCALES } from './i18n';
 type Phase = 'idle' | 'capturing' | 'select' | 'sheet' | 'sending' | 'sent';
 const MIN_SIDE = 24;
 const ICON_BUG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M8 12h8M12 8v8"/></svg>';
+/** The round menu button: a little bug (head, antennae, body with a centre line, three legs a side), drawn for Bugframe. */
+const ICON_INSECT = '<svg data-icon="bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5.5" r="2"/><ellipse cx="12" cy="14" rx="5" ry="6.5"/><path d="M12 9v11.5M10.5 4.2 8.5 2.2M13.5 4.2l2-2M7.2 11 4 9M7 14H3.5M7.2 17 4 19.5M16.8 11 20 9M17 14h3.5M16.8 17l3.2 2.5"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 const ICON_SCAN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg>';
@@ -352,26 +354,38 @@ class Bugframe implements BugframeInstance {
     wrap.style.setProperty('--bf-x', `${this.o.offset?.x ?? 0}px`); wrap.style.setProperty('--bf-y', `${this.o.offset?.y ?? 0}px`);
     this.wrap = wrap;
     const open = (this.reports ?? []).filter(r => !['fixed', 'wontfix', 'approved'].includes(r.status)).length;
-    const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'menu', 'aria-expanded': String(this.menu), disabled: busy });
-    fab.append(icon(busy ? ICON_SPIN : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 6h15M5 12h15M5 18h15"/></svg>'));
+    const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'dialog', 'aria-expanded': String(this.menu), disabled: busy });
+    fab.append(icon(busy ? ICON_SPIN : ICON_INSECT));
     if (open > 0 && !busy) fab.append(h('b', { class: 'count', 'aria-label': t.openCount.replace('{n}', String(open)) }, String(open)));
-    fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
+    // Closing the popover returns focus to this round button, the one that opened it.
+    const refocus = () => this.root?.querySelector<HTMLElement>('.fab')?.focus();
+    fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else refocus(); });
     const start = h('button', { type: 'button', class: 'feedback-start', disabled: busy }, icon(busy ? ICON_SPIN : ICON_BUG), t.button);
     start.addEventListener('click', () => void this.begin());
     wrap.append(start, fab);
     if (this.error && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'alert' }, this.error));
     else if (this.notice && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'status' }, this.notice));
     if (this.menu) wrap.append(this.renderMenu());
-    wrap.addEventListener('keydown', e => { if (e.key === 'Escape' && this.menu) { this.menu = false; this.render(); this.restoreFocus(); } });
+    wrap.addEventListener('keydown', e => { if (e.key === 'Escape' && this.menu) { this.menu = false; this.render(); refocus(); } });
     return wrap;
   }
 
   private renderMenu(): HTMLElement {
-    const t = this.t, menu = h('div', { class: 'menu', role: 'menu', 'aria-label': t.menuMine });
+    // A popover with mixed content is a dialog. Only the actions are a menu (a menu may hold nothing but menu items);
+    // the request list, with its links, buttons and text box, and "Turn off" sit beside it.
+    const t = this.t, menu = h('div', { class: 'menu', role: 'dialog', 'aria-label': t.menuMine });
+    const actions = h('div', { class: 'actions', role: 'menu', 'aria-label': t.button, 'aria-orientation': 'vertical' });
     const main = h('button', { type: 'button', role: 'menuitem', class: 'item main' }, icon(ICON_BUG), t.menuReport);
     main.addEventListener('click', () => void this.begin());
-    menu.append(main);
-    if (this.api && this.role === 'admin') menu.append(this.analyzeItem());
+    actions.append(main);
+    if (this.api && this.role === 'admin') actions.append(this.analyzeItem());
+    actions.addEventListener('keydown', e => {
+      const items = Array.from(actions.querySelectorAll<HTMLElement>('[role=menuitem]')), at = items.indexOf(this.root?.activeElement as HTMLElement);
+      const next = e.key === 'ArrowDown' ? (at + 1) % items.length : e.key === 'ArrowUp' ? (at - 1 + items.length) % items.length : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : -1;
+      if (next < 0 || at < 0) return;
+      e.preventDefault(); items[next].focus();
+    });
+    menu.append(actions);
     if (this.api) {
       const list = h('div', { class: 'list' }, h('p', { class: 'list-title' }, `${t.menuMine}${this.reports ? ` (${this.reports.length})` : ''}`));
       if (this.reports === null) list.append(h('p', { class: 'empty' }, t.loading));
@@ -426,7 +440,7 @@ class Bugframe implements BugframeInstance {
       menu.append(list);
     }
     if ((this.o.enable ?? 'query') === 'query' || this.o.enable === 'storage') {
-      const off = h('button', { type: 'button', role: 'menuitem', class: 'item off' }, t.menuTurnOff);
+      const off = h('button', { type: 'button', class: 'item off' }, t.menuTurnOff);
       off.addEventListener('click', () => this.disable());
       menu.append(off);
     }

@@ -11,6 +11,24 @@ export const ADMIN_KINDS = ['audit'];
 /** The only extra files a storage adapter may hold for a report, written by `bugframe audit`. */
 export const ATTACHMENT_NAMES = ['audit.md', 'audit.json'];
 export const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+/** The page-analysis bookkeeping a watcher may store with an audit request: a fixed shape, bounded, nothing else kept. */
+export function cleanAudit(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Number.isInteger(value.attempts) || value.attempts < 0 || value.attempts > 10) return null;
+  const out = { attempts: value.attempts };
+  for (const key of ['startedAt', 'finishedAt']) {
+    if (value[key] === undefined) continue;
+    if (typeof value[key] !== 'string' || value[key].length > 40 || Number.isNaN(Date.parse(value[key])) || !/^\d{4}-\d{2}-\d{2}T/.test(value[key])) return null;
+    out[key] = value[key];
+  }
+  for (const key of ['degraded', 'noteOnly']) { if (value[key] === undefined) continue; if (typeof value[key] !== 'boolean') return null; out[key] = value[key]; }
+  if (value.counts !== undefined) {
+    if (!value.counts || typeof value.counts !== 'object' || Array.isArray(value.counts)) return null;
+    out.counts = {};
+    for (const key of ['blocker', 'high', 'medium', 'low']) { const n = value.counts[key] ?? 0; if (!Number.isInteger(n) || n < 0 || n > 1_000_000) return null; out.counts[key] = n; }
+  }
+  if (value.lastError !== undefined) { if (typeof value.lastError !== 'string') return null; out.lastError = value.lastError.slice(0, 300); }
+  return out;
+}
 export const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const pad = n => String(n).padStart(2, '0');
 

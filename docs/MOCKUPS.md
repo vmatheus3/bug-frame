@@ -16,7 +16,13 @@ These images show the actual Bugframe 0.5.0 interface running in Chromium. They 
 | `images/customer-approved.png` | Customer-approved result and progress history. |
 | `images/analyze-page-menu.png` | A developer opens the Bugframe menu on a demo pricing page and sees **Analyze this page**. |
 | `images/analyze-page-queued.png` | The confirmation after the analysis is queued. |
-| `images/page-audit-report.png` | The private inbox with the page-analysis request and its report, from a real probe-only `bugframe audit --watch --once --agent none` run (no AI model) on the demo page with planted problems. |
+| `images/page-audit-report.png` | The private inbox with the page-analysis request and its rendered report (findings table, severity labels, copy button), from a real probe-only `bugframe audit --watch --once --agent none` run (no AI model) on the demo page with planted problems. |
+| `images/crawl-report.png`, `images/crawl-sitemap.png`, `images/crawl-report-mobile.png` | `crawl.html` from a real `bugframe crawl` of the demo dashboard: findings, the site map of what each control does, and the report on a phone. |
+| `images/crawl-baseline.png` | `crawl.html` of a second run with `--baseline`, on a second version of the demo dashboard with two regressions: the tiles, the *New* filter and the new findings. |
+| `images/crawl-in-inbox.png` | The private inbox showing a crawl filed with `--dir`: a finished page analysis with the rendered short report. |
+| `images/cli-doctor.png` | The output of `bugframe doctor` on the machine that made these pictures. |
+| `images/remote-export.png` | The output of `bugframe --remote … export` against the demo server, and the top of the worklist it wrote. |
+| `images/connect-agent.png` | The output of `bugframe connect agent … --once` against the demo server, and what the command received. |
 
 ## Reproduce
 
@@ -27,6 +33,9 @@ npm ci --ignore-scripts
 npx playwright install chromium
 npm run docs:images
 ```
+
+The three terminal pictures are the real, unedited output of those commands, shown in a plain page that the script
+screenshots; paths are relative because the commands run inside the disposable folder.
 
 The capture script starts an isolated loopback demo with disposable accounts and report storage, signs in through real session flows, accepts an invitation, submits feedback through the real widget, and opens the developer inbox. It updates the fictional headline in a disposable source copy, requests customer review, changes the interface language, and records the approval. Signed in as the developer, it queues **Analyze this page** on the demo pricing page (`examples/plain-html/audit-demo.html`), runs `bugframe audit --watch --once --agent none` against the disposable reports folder, and opens the report in the inbox. It closes Chromium and removes its temporary data afterward. The repository’s demo source is not modified during capture.
 
@@ -45,3 +54,11 @@ The language screenshots intentionally keep the original English customer text a
 ![Analysis queued](images/analyze-page-queued.png)
 ![Page analysis report in the inbox](images/page-audit-report.png)
 ![Approved request](images/customer-approved.png)
+![Crawl report](images/crawl-report.png)
+![Crawl site map](images/crawl-sitemap.png)
+![Crawl report on a phone](images/crawl-report-mobile.png)
+![Crawl with a baseline](images/crawl-baseline.png)
+![A crawl in the inbox](images/crawl-in-inbox.png)
+![bugframe doctor](images/cli-doctor.png)
+![Remote export](images/remote-export.png)
+![connect agent](images/connect-agent.png)

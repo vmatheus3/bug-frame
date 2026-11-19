@@ -16,8 +16,12 @@ the developer's code, and never shows the auditor the project's instructions for
    `Page analysis: 2 high, 3 medium. Top: F1 …; F2 …; F3 …. Full report: audit.md.`
    `--once` processes the queue and exits.
 3. The developer sees the status in the widget's *My requests* and the full report in the private inbox (**Page
-   analysis** badge and filter; the markdown is rendered as plain text, never HTML). `GET /reports/:id/audit.md` is
-   admin-only and served as `text/markdown` with `nosniff`, `no-store` and a sandboxing CSP.
+   analysis** badge and filter). The report is rendered: headings, the findings table with severity labels, lists and
+   code. It quotes text from the audited page, so it is untrusted: `src/server/inbox/markdown.js` builds elements from
+   a fixed tag list with `createElement` and text nodes only, takes no attribute from the report and never makes a link
+   or an image live; the inbox's CSP stays `default-src 'none'`. **Copy analysis as Markdown** copies the original text
+   for a coding agent. `GET /reports/:id/audit.md` is admin-only and served as `text/markdown` with `nosniff`,
+   `no-store` and a sandboxing CSP.
 
 Failure handling: a failed audit sets the request back to `open` with the reason in the note and records
 `audit.attempts`; after three attempts (or at once for an unusable or non-local page URL) it is not retried until
@@ -40,9 +44,27 @@ otherwise. Anything else is refused with a message naming the two ways out:
 - `--allow-remote` accepts a non-local target and prints a `WARNING --allow-remote` line naming it. Use it only for a
   staging copy that is safe to click through; the probe blocks writes but cannot know what a GET does on a server.
 
-Remote mode: not supported. Uploading results would need a new authenticated write route for files produced by an AI
-agent; running the watcher where the reports folder lives avoids that attack surface. Sync the folder if the API runs
-elsewhere.
+## Against a hosted API (`--remote`)
+
+When the reports live on a hosted site, the watcher uses its API as the queue and the store:
+
+```bash
+npx bugframe audit --watch --remote https://your-site.example/api/bugframe --project . --base-url http://localhost:3000
+```
+
+It needs the private admin credential (`BUGFRAME_ADMIN_TOKEN`, or the credential file of the other remote commands;
+`--credentials FILE`), HTTPS (`--allow-localhost` permits HTTP to a loopback API for testing), and a server on 0.6.0
+(unreleased) or newer. What travels:
+
+| Step | Request | Limits on the server |
+|---|---|---|
+| list the queue | `GET /reports?all=1`, then `GET /reports/:id` for each waiting analysis | admin only |
+| claim, fail, hand back | `PATCH /reports/:id` with `{ status, note, audit }` | admin only; `audit` is the watcher's bookkeeping in a fixed shape (`attempts` 0–10, ISO `startedAt`/`finishedAt`, `degraded`, `noteOnly`, `counts` per severity, `lastError` cut to 300 characters; anything else is dropped) and is refused on a request that is not a page analysis. History, review version and file links are written by the server, not by the watcher |
+| upload the result | `PUT /reports/:id/audit.md` (`text/markdown`), `PUT /reports/:id/audit.json` (`application/json`) | admin only; page-analysis requests only (409 otherwise); exactly those two names; valid UTF-8 without NUL bytes, JSON must parse; 2 MB enforced while streaming; only when the storage adapter implements `writeAttachment` (404 otherwise); no CORS for `PUT`, and a cross-origin browser request is refused |
+
+The uploaded Markdown is shown by the inbox as described above (text only). An older server answers the upload with
+404 or 405; the watcher then says to upgrade the server instead of retrying. The page itself is still measured on your
+machine: `--base-url` points the captured live URL at your local server, and the local-only rule below applies.
 
 ## One audit, step by step
 
@@ -98,19 +120,35 @@ elsewhere.
    `_bugframe_audit/probe.json`, `screens/<viewport>-<scheme>.png`, `clicks/c<n>.png`.
 
    **Click probe safety.** Every non-GET/HEAD request is aborted and recorded; WebSocket connections are closed before
-   they reach the server (`routeWebSocket`, so Playwright 1.48 or newer is required) and recorded as `WEBSOCKET`;
-   `navigator.sendBeacon` sends nothing and is recorded as `BEACON`; `submit` events are cancelled and `form.submit()` is
-   replaced, so forms never reach the network; top-level navigations to other sites or to destructive-looking URLs are
-   aborted; `alert`/`confirm` dialogs are dismissed; popups and `window.open` pages are closed; downloads and service
-   workers are off. EventSource streams are plain GETs and go through the same request guard. Controls whose visible
+   they reach the server (`routeWebSocket`, so Playwright 1.48 or newer is required) and recorded as `WEBSOCKET`, in
+   pages and iframes and also in dedicated Web Workers, which that routing does not reach: a worker (from a URL, a blob
+   or a data URL) starts behind a stub that fails its sockets and reports them, and its own requests pass the same
+   guard. A SharedWorker and a worker started by a worker are not started (`SHAREDWORKER`, `WORKER`), because their
+   requests cannot be seen at all. `navigator.sendBeacon` and WebTransport send nothing (`BEACON`, `WEBTRANSPORT`);
+   `submit` events are cancelled and `form.submit()` is replaced, so forms never reach the network. Navigations are
+   fetched one hop at a time: a navigation or a redirect to another site or to a destructive-looking URL is aborted and
+   recorded (`NAVIGATE`, `REDIRECT <path> → <target>`), and nothing is requested from the other site. Requests the
+   page fires (fetch, XHR) are fetched one hop at a time as well: a redirect to another site or a destructive-looking
+   URL is refused (`BLOCKED GET <target>`, with the hop it came from).
+   `alert`/`confirm` dialogs are dismissed; popups and `window.open` pages are closed; downloads and service workers are
+   off. EventSource streams are plain GETs and go through the same request guard. GET requests a click fires are sent,
+   except API calls (fetch, XHR, EventSource) to a destructive-looking URL once a click was dispatched (`BLOCKED GET`).
+   If the guard itself fails on a request, the request is aborted. Controls whose visible
    name, `aria-label`, `title` or link URL (path and query, decoded and split at camelCase, `-`, `_` and punctuation, so
    `/items/8/deleteItem` and `/items/7?op=delete` match) contains destructive words are recorded as
    `skipped: destructive` and never clicked (English: delete, remove, destroy,
-   erase, wipe, purge, pay, payment, purchase, buy, checkout, place order, subscribe, unsubscribe, log out, sign out,
-   deactivate, close account, cancel subscription/account/plan/order, transfer, withdraw, refund, send money, reset,
-   revoke; Portuguese and Spanish equivalents). Links to other sites, `mailto:` and `tel:` are not clicked. A control is
-   *appears dead* only when the click produced no DOM mutation, navigation, dialog, request (sent or blocked), form
-   submission, popup or console output within 700 ms.
+   erase, wipe, purge, pay, payment, purchase, buy, checkout, place order, subscribe, unsubscribe, log out, log off,
+   sign out, sign off, end session, deactivate, close account, cancel subscription/account/plan/order, transfer,
+   withdraw, refund, send money, reset, revoke; Portuguese and Spanish equivalents such as sair, deslogar, encerrar
+   sessão, salir, cerrar sesión). Links to other sites, `mailto:` and `tel:` are not clicked. A control is
+   *appears dead* only when the click produced nothing of its own: no DOM mutation, navigation, working in-page anchor,
+   dialog, opened menu or popover, `aria-expanded` change, focus move, request (sent or blocked), form submission, popup
+   or console output within the settle time (`--settle-ms`, 700 ms by default). The page is watched for one settle
+   window before the click; requests, console lines and DOM changes it produces by itself (polling, a clock) are
+   subtracted, and a click with no effect of its own on such a page is recorded as *unclear* (noted under *Not
+   checked*), never as dead. A link to `#` with no handler is dead; "Failed to fetch" after a request the guard blocked
+   is not counted as an error of the click.
+   A submitted form with an action (or `method="post"`) is recorded as `FORM <METHOD> <path>` among the blocked requests.
 3. **Auditor.** With `--agent claude`, Claude Code runs in the workspace as:
 
    ```
@@ -174,11 +212,13 @@ responsibility.
 | `--agent-cmd "CMD"` | any other auditor: prompt + task on stdin, cwd = workspace, report on stdout |
 | `--model ID` | passed to Claude Code |
 | `--no-click` | skip the click probe |
+| `--settle-ms MS` | how long a click gets to show an effect, and how long the page is watched before it, 100–10000 (default 700) |
 | `--timeout MS` | auditor time limit, 10 s–2 h (default 15 min) |
 | `--keep` | keep the blind workspace and print where it is |
 | `--base-url URL` | replace the page's origin with a local server (one-shot and watch mode) |
 | `--allow-remote` | audit a non-local page anyway, with a warning (never production) |
 | `--watch` / `--dir` / `--once` | queue mode, see above |
+| `--watch --remote URL` / `--credentials FILE` / `--allow-localhost` | queue mode against a hosted API, see above |
 | `--check-blind` | run the canary and confinement checks (defaults to `--model haiku`) |
 
 ## Storage adapters
@@ -186,4 +226,5 @@ responsibility.
 `createFileStorage` and `createMemoryStorage` implement `writeAttachment(id, name, data)`: only the exact names
 `audit.md` and `audit.json`, at most 2 MB, only for an existing report, written atomically with `0600` permissions. A
 custom adapter without the method keeps working: the watcher saves the summary in the note (`audit.noteOnly: true`) and
-`GET /reports/:id/audit.md` answers 404; Bugframe never asks such an adapter's `readFile` for the new names.
+`GET /reports/:id/audit.md` answers 404; Bugframe never asks such an adapter's `readFile` for the new names, and
+`PUT /reports/:id/audit.md` answers 404 for it too.

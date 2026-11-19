@@ -8,7 +8,7 @@ export function pageOf(r) {
 }
 
 export function oneLine(r) {
-  return `${r.id}  ${String(r.status ?? 'open').padEnd(6)}  ${pageOf(r).slice(0, 32).padEnd(32)}  ${one(r.description).slice(0, 70)}`;
+  return `${r.id}  ${String(r.status ?? 'open').padEnd(17)}  ${pageOf(r).slice(0, 32).padEnd(32)}  ${one(r.description).slice(0, 70)}`;
 }
 
 export function showText(r, dir) {
@@ -43,8 +43,10 @@ export function parseBudget(v) {
 const firstLine = s => one(String(s ?? '').split('\n')[0]);
 const errClass = m => firstLine(m).replace(/\d+/g, '#').slice(0, 160);
 
-const GUIDANCE = `Each item is one person's own words with a picture of the area they marked (open the region picture first), the exact link and the state of the screen. ` +
-  'Triage suggestions before implementing them; submission is not scope approval. Fix accepted work at its root cause, prove it with a before/after picture, then hand it back for review with `bugframe ready <id> --note "what changed and what to review"` (legacy close-only workflows: `bugframe close <id> --note "..."`).';
+/** `command` is how to reach the reports again: `bugframe` for a local folder, `bugframe --remote URL` for a hosted API. */
+const guidance = (command = 'bugframe') => `Each item is one person's own words with a picture of the area they marked (open the region picture first), the exact link and the state of the screen. ` +
+  `Triage suggestions before implementing them; submission is not scope approval. Fix accepted work at its root cause, prove it with a before/after picture, then hand it back for review with \`${command} ready <id> --note "what changed and what to review"\` (legacy close-only workflows: \`${command} close <id> --note "..."\`).` +
+  (command === 'bugframe' ? '' : ' The files next to this list are a read-only copy: only those commands change a request.');
 
 /** A block an agent can execute: where to go, how the screen was set up, what to look at, and what must no longer happen. */
 function reproBlock(r) {
@@ -82,7 +84,8 @@ function dedupe(reports) {
 /** Build WORKLIST.md: reports grouped by page, with picture paths relative to the worklist file.
  *  When the result would exceed budgetChars, near-identical reports are merged, console errors trimmed
  *  with explicit markers, and the highest-signal items (most-reported first, then newest) kept. */
-export function buildWorklist(reports, { dir, out, label = 'open', now = new Date(), budgetChars = Infinity }) {
+export function buildWorklist(reports, { dir, out, label = 'open', now = new Date(), budgetChars = Infinity, command = 'bugframe' }) {
+  const GUIDANCE = guidance(command);
   const stamp = now.toISOString().slice(0, 16).replace('T', ' ');
   if (!reports.length) return `# Bug work list\n\nNo ${label} bug reports. (${stamp})\n`;
   const groups = new Map();

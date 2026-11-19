@@ -11,5 +11,5 @@ const bf = createBugframe({
   trustProxy: true,                                       // you are behind your host's proxy; rate limits use X-Forwarded-For
 });
 
-export const { GET, POST, PATCH, OPTIONS } = routeHandlers(bf);
+export const { GET, POST, PUT, PATCH, OPTIONS } = routeHandlers(bf); // PUT: page-analysis results from `bugframe audit --watch --remote`
 export const runtime = 'nodejs';

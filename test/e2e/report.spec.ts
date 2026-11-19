@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { signIn } from './session';
@@ -90,7 +90,7 @@ test('whole screen, and the tool stays off without ?bugs=1', async ({ page }) =>
   await expect(page.locator('.sent')).toBeVisible();
   await page.goto('/');                                    // still on without the query string
   await expect(page.locator('.fab')).toBeVisible();
-  await page.locator('.fab').click(); await page.getByRole('menuitem', { name: /Turn off/ }).click();
+  await page.locator('.fab').click(); await page.getByRole('button', { name: /Turn off/ }).click();
   await expect(page.locator('[data-bugframe]')).toHaveCount(0);
 });
 
@@ -289,6 +289,41 @@ test('developer page analysis: the admin-only menu item queues it, audit --watch
   await page.locator('#reports button').filter({ hasText: 'Page analysis requested' }).click();
   await expect(page.locator('#reports .request-kind[data-kind="audit"]').first()).toHaveText('Page analysis');
   await expect(page.locator('#audit-panel')).toBeVisible();
-  await expect(page.locator('#audit-text')).toContainText('# Page audit: http://127.0.0.1:4455/');
+  // The report is rendered, not dumped: a heading, a findings table with severity labels, no Markdown syntax left over.
+  await expect(page.locator('#audit-text h3')).toHaveText(/^Page audit: http:\/\/127\.0\.0\.1:4455\//);
+  await expect(page.locator('#audit-text .md-table tbody tr').first()).toContainText('F1');
+  await expect(page.locator('#audit-text .md-table .sev').first()).toHaveText(/high|medium|low/);
+  await expect(page.locator('#audit-text')).not.toContainText('| F1 |');
   await expect(page.locator('#audit-waiting')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Copy analysis as Markdown' })).toBeVisible();
+  // A report quotes the audited page, so its text is untrusted: markup in it must only ever be shown as text.
+  writeFileSync(join(DIR, done.id, 'audit.md'), '# Page audit: <img src=x onerror="window.__xss=1">\n\n[open](javascript:window.__xss=2) <script>window.__xss=3</script>\n\n| # | Finding |\n|---|---|\n| F1 | <svg onload="window.__xss=4"> |\n');
+  await page.locator('#refresh').click();
+  await expect(page.locator('#audit-text h3')).toHaveText('Page audit: <img src=x onerror="window.__xss=1">');
+  await expect(page.locator('#audit-text td').nth(1)).toHaveText('<svg onload="window.__xss=4">');
+  expect(await page.locator('#audit-text :is(img, script, svg, a, iframe)').count()).toBe(0);
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
+});
+
+test('hosted API: audit --watch --remote uploads its result over HTTP, and --remote export pulls the worklist with pictures', async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
+  const remote = ['--remote', 'http://127.0.0.1:4455/api/bugframe', '--allow-localhost'];
+  const cli = (...args: string[]) => execFileSync('node', ['src/cli/bin.mjs', ...args], { encoding: 'utf8', env: { ...process.env, BUGFRAME_ADMIN_TOKEN: 'demo-admin-token' } }).trim();
+  await signIn(page, 'e2e-admin-password');
+  await openMenu(page);
+  await page.getByRole('menuitem', { name: /Analyze this page/ }).click();
+  await expect(page.locator('.toast')).toContainText('Analysis queued');
+  // The watcher never touches the reports folder here: the queue and the result travel through the API.
+  expect(cli('audit', '--watch', '--once', ...remote, '--project', 'examples/plain-html', '--agent', 'none', '--base-url', 'http://127.0.0.1:4455', '--viewports', '1280x800', '--no-click')).toBe('Processed 1 page-analysis request.');
+  await page.goto('/bugs/');
+  await page.locator('#reports button').filter({ hasText: 'Page analysis requested' }).first().click();
+  await expect(page.locator('#audit-text h3')).toHaveText(/^Page audit: http:\/\/127\.0\.0\.1:4455\//);
+  await expect(page.locator('#info')).toContainText('Ready for your review');
+  // Export over the API: a private local copy with pictures, and a worklist that points back at the server.
+  const out = testInfo.outputPath('pulled', 'WORKLIST.md');
+  expect(cli(...remote, 'export', '--all', '--out', out)).toContain('http://127.0.0.1:4455/api/bugframe');
+  const worklist = readFileSync(out, 'utf8'), id = /### (bug-\d{8}-\d{6}-[a-f0-9]{4})/.exec(worklist)![1];
+  expect(worklist).toContain('bugframe --remote http://127.0.0.1:4455/api/bugframe ready <id>');
+  expect(pngSize(join(testInfo.outputPath('pulled'), id, 'region.png')).w).toBeGreaterThan(0);
+  expect(worklist).not.toContain('demo-admin-token');
 });

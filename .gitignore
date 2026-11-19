@@ -10,3 +10,7 @@ examples/plain-html/reports/
 .env
 .env.*
 *.tgz
+.bugframe-auth*.json
+bugframe-crawl-*/
+bugframe-audit/
+bugframe-remote/

@@ -31,8 +31,12 @@ Or as a plugin in `main.ts`: `init({ ... })` right after `createApp(App).mount('
 ```
 
 In SvelteKit, put it in `src/routes/+layout.svelte`; `onMount` only runs in the browser. For the server side use
-`src/routes/api/bugframe/[...path]/+server.ts` with `export const GET = POST = PATCH = OPTIONS = ({ request }) => bf.handle(request)`
-(see the Next.js example for the `createBugframe` setup).
+`src/routes/api/bugframe/[...path]/+server.ts` (see the Next.js example for the `createBugframe` setup):
+
+```ts
+const handle = ({ request }: { request: Request }) => bf.handle(request);
+export { handle as GET, handle as POST, handle as PUT, handle as PATCH, handle as OPTIONS };
+```
 
 ## Angular / anything else
 

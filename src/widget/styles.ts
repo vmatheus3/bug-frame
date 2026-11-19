@@ -30,7 +30,8 @@ button { font: inherit; color: inherit; }
 .bottom-right .menu, .top-right .menu { right: 0; } .bottom-left .menu, .top-left .menu { left: 0; }
 .menu button.item { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 0; background: none; text-align: left; cursor: pointer; }
 .menu button.item svg { width: 18px; height: 18px; flex: none; }
-.menu .main { font-weight: 600; border-bottom: 1px solid var(--bf-line); }
+.menu .actions { display: flex; flex-direction: column; flex: none; border-bottom: 1px solid var(--bf-line); }
+.menu .main { font-weight: 600; }
 .menu .off { color: var(--bf-muted); border-top: 1px solid var(--bf-line); font-size: 14px; }
 .list { padding: 8px 14px; }
 .list-title { margin: 4px 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--bf-muted); }
@@ -41,7 +42,7 @@ button { font: inherit; color: inherit; }
 .list li strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; font-weight: 500; }
 .list li small { display: block; font-size: 13px; color: var(--bf-muted); }
 .status { font-style: normal; font-weight: 600; }
-.status.is-open { color: var(--bf-accent); } .status.is-fixed { color: var(--bf-ok); } .status.is-wontfix { color: var(--bf-muted); }
+.status.is-open, .status.is-ready_for_review, .status.is-changes_requested { color: var(--bf-accent); } .status.is-fixed, .status.is-approved { color: var(--bf-ok); } .status.is-wontfix { color: var(--bf-muted); }
 .layer { position: fixed; z-index: calc(var(--bf-z, 2147483000) + 1); inset: 0; background: rgba(10,14,24,.5); touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; outline-offset: -4px; }
 .rect { position: absolute; border: 2px solid #fff; outline: 2px dashed var(--bf-accent); background: transparent; box-shadow: 0 0 0 100vmax rgba(10,14,24,.55); pointer-events: none; }
 .bar { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 8px); transform: translateX(-50%); width: max-content; max-width: calc(100vw - 16px); padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; background: #14171f; color: #fff; border-radius: 14px; box-shadow: 0 6px 20px rgba(10,14,24,.4); cursor: default; pointer-events: none; }
