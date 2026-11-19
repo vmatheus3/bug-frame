@@ -50,6 +50,22 @@ document.getElementById('sync').onclick = () => { fetch('/api/sync', { method: '
       case '/go-off': res.writeHead(302, { location: `${otherBase}/clicked` }); return res.end();
       case '/hop': res.writeHead(302, { location: '/landed' }); return res.end();
       case '/landed': return html(page('Landed', '<p>The redirect stayed on this site.</p>'));
+      // Requests the page fires that redirect into a session-ending URL or off the site, a 307 → 302 chain, one fired
+      // while the page loads, and a page that redirects to itself. Not linked from "/": crawled on its own.
+      case '/bounce': return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Bounce · Hostile fixture</title></head><body><main><h1>Bounce</h1>
+<p><a href="/loop">Loop</a></p><button id="feed" type="button">Refresh feed</button><button id="chain" type="button">Refresh chain</button><button id="partner" type="button">Partner feed</button><p id="out"></p></main>
+<script>const show = t => { document.getElementById('out').textContent = t; };
+fetch('/boot').catch(() => {});
+document.getElementById('feed').onclick = () => fetch('/feed').then(r => r.text()).then(show).catch(() => {});
+document.getElementById('chain').onclick = () => fetch('/feed-chain').then(r => r.text()).then(show).catch(() => {});
+document.getElementById('partner').onclick = () => fetch('/feed-off').then(r => r.text()).then(show).catch(() => {});</script></body></html>`);
+      case '/boot': res.writeHead(302, { location: '/api/session/end?from=boot' }); return res.end();
+      case '/feed': res.writeHead(302, { location: '/api/session/end?x=1' }); return res.end();
+      case '/feed-chain': res.writeHead(307, { location: '/feed-step' }); return res.end();
+      case '/feed-step': res.writeHead(302, { location: '/api/session/end?y=2' }); return res.end();
+      case '/feed-off': res.writeHead(302, { location: `${otherBase}/feed` }); return res.end();
+      case '/api/session/end': res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('session ended');
+      case '/loop': res.writeHead(302, { location: '/loop' }); return res.end();
       // A page that never stops: a poll every 200 ms and a ticking clock. "Archive" has no handler; "Filters" works.
       case '/poll': return html(page('Live board', `
 <p>Updated <span id="clock"></span></p><button id="archive" type="button">Archive</button><button id="filters" type="button" aria-expanded="false">Filters</button>

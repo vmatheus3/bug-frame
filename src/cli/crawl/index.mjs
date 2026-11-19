@@ -8,7 +8,7 @@ import { CliError, shown } from '../commands.mjs';
 import { createFileStorage } from '../../server/storage-fs.mjs';
 import { MAX_ATTACHMENT_BYTES, newReportId } from '../../server/util.mjs';
 import { isLocalUrl, stamp } from '../audit/index.mjs';
-import { CONTEXT, DEFAULT_SETTLE_MS, checkLink, clickOne, guard, isDestructive, load, loadPlaywright, pageChecks, parseViewports, redactUrl, watch } from '../audit/probe.mjs';
+import { CONTEXT, DEFAULT_SETTLE_MS, blockKey, checkLink, cleanError, clickOne, guard, isDestructive, load, loadPlaywright, pageChecks, parseViewports, redactUrl, watch } from '../audit/probe.mjs';
 import { SEVERITIES, analyze, applyBaseline, baselineOf, classifyClick, languageMix } from './detect.mjs';
 import { crawlHtml, crawlMarkdown } from './report.mjs';
 import { createFrontier, isHashRoute, normalizeUrl, routeTemplate, shortUrl } from './urls.mjs';
@@ -145,7 +145,7 @@ export async function crawlSite(o) {
         busy++;
         try { const n = ++index; const page = await crawlPage({ item, n, worker, opt, viewports, desktop, origin, out, frontier, tests, clickCounter, stopped }); pages.push(page);
           opt.log(`${String(n).padStart(3)}/${opt.maxPages} ${page.path}${page.route !== page.path ? `  [${page.route}]` : ''}  ${page.status ?? page.error ?? '-'}${page.redirectedTo ? ` → ${page.redirectedTo}` : ''}  ${page.controls.filter(c => !['skipped', 'unknown'].includes(c.outcome) && c.kind === 'button').length} controls  ${page.controls.filter(c => c.outcome === 'dead' || c.outcome === 'error').length} dead/error`); }
-        catch (e) { if (!opt.signal?.aborted) crawl.notes.push(`${shortUrl(item.url)}: crawl error (${String(e?.message ?? e).split('\n')[0].slice(0, 160)})`); }
+        catch (e) { if (!opt.signal?.aborted) crawl.notes.push(`${shortUrl(item.url)}: crawl error (${cleanError(e)})`); }
         finally { busy--; }
         await sleep(PAUSE_MS);
       }
@@ -196,7 +196,7 @@ export async function checkTargets({ pages, frontier, stopped, check, max = MAX_
     if (stopped()) { linkStatus.set(target, { status: null, skipped: 'stopped' }); continue; }
     if (checks >= max) { linkStatus.set(target, { status: null, skipped: 'link-check limit' }); continue; }
     checks++;
-    try { linkStatus.set(target, await check(target)); } catch (e) { linkStatus.set(target, { status: null, error: String(e?.message ?? e).split('\n')[0].slice(0, 80) }); }
+    try { linkStatus.set(target, await check(target)); } catch (e) { linkStatus.set(target, { status: null, error: cleanError(e) }); }
   }
   return linkStatus;
 }
@@ -214,7 +214,7 @@ async function crawlPage({ item, n, worker, opt, viewports, desktop, origin, out
         if (vp !== desktop) continue;
         // A redirect the guard refused (another site, a destructive URL, a loop) is a fact about the page, not a load error.
         if (e.blockedRedirect) { rec.status = e.blockedRedirect.status; rec.blockedRedirect = { to: e.blockedRedirect.to, reason: e.blockedRedirect.reason }; }
-        else rec.error = String(e?.message ?? e).split('\n')[0].slice(0, 160);
+        else rec.error = cleanError(e);
         return rec;
       }
       if (vp === desktop) {
@@ -295,7 +295,7 @@ function toPublic(crawl, pages, frontier, blocked, linkStatus) {
       controlsSkippedDestructive: pages.flatMap(p => p.controls).filter(c => c.reason === 'destructive').length, linksChecked: [...linkStatus.values()].filter(s => !s.skipped).length, outcomes, findings: sev, blockedRequests: blocked.length },
     skipped: { destructive: [...frontier.skipped.destructive].slice(0, 200), excluded: [...frontier.skipped.excluded].slice(0, 200), depth: [...frontier.skipped.depth].slice(0, 200), pagesCap: [...frontier.skipped.pages].slice(0, 200), offsite: frontier.skipped.offsite,
       template: [...frontier.skipped.template].map(([route, urls]) => ({ route, count: urls.size, examples: [...urls].slice(0, 3).map(u => shortUrl(redactUrl(u))) })) },
-    blockedRequests: [...new Map(blocked.map(b => [`${b.method} ${b.url}`, b])).values()].slice(0, 200),
+    blockedRequests: [...new Map(blocked.map(b => [blockKey(b), b])).values()].slice(0, 200),
     pages: pages.sort((a, b) => a.n - b.n).map((p, i) => ({ id: `p${i + 1}`, path: p.path, route: p.route, status: p.status, ...(p.error ? { error: p.error } : {}), ...(p.redirectedTo ? { redirectedTo: p.redirectedTo } : {}), ...(p.blockedRedirect ? { blockedRedirect: p.blockedRedirect } : {}), title: p.title, h1: p.h1, lang: p.lang,
       depth: p.depth, via: p.via, from: p.from, screenshot: p.screenshot, screenshots: p.screenshots, consoleErrors: p.consoleErrors, pageErrors: p.pageErrors, failedRequests: p.failed, stuckLoading: p.stuckLoading,
       links: p.links.length, controls: p.controls.map(({ toUrl, ...c }) => c) })),

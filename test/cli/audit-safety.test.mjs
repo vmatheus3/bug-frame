@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createFileStorage } from '../../src/server/index.mjs';
 import { INSTRUCTION_NAMES, INSTRUCTION_TAILS, SECRET_NAMES, createBlindWorkspace } from '../../src/cli/audit/blind.mjs';
 import { auditOnce, isLocalUrl, watchAudits } from '../../src/cli/audit/index.mjs';
-import { checkLink, isDestructive } from '../../src/cli/audit/probe.mjs';
+import { checkLink, cleanError, isDestructive } from '../../src/cli/audit/probe.mjs';
 import { checkBlind, runProcess } from '../../src/cli/audit/runner.mjs';
 import { cleanup, tmpDir } from '../helpers.mjs';
 
@@ -89,10 +89,17 @@ test('only local pages are audited unless --base-url points at one or --allow-re
 });
 
 test('destructive words are found in the whole URL (path and query, camelCase, kebab and snake parts) and in labels', () => {
-  for (const s of ['/items/7?op=delete', 'http://x/items/8/deleteItem', '/users/remove-user', '/cancel_subscription', '/conta/excluirConta', '/cerrar-sesion', '/cerrar-sesi%C3%B3n', 'Log out', '/logout', '/api?action=PURGE', 'Sair da conta'])
+  for (const s of ['/items/7?op=delete', 'http://x/items/8/deleteItem', '/users/remove-user', '/cancel_subscription', '/conta/excluirConta', '/cerrar-sesion', '/cerrar-sesi%C3%B3n', 'Log out', '/logout', '/api?action=PURGE', 'Sair da conta', '/api/session/end?x=1', '/session/end', '/end-session'])
     assert.equal(isDestructive(s), true, s);
-  for (const s of ['/about', '/payments-history', '/deleted-items', '/items/7?op=view', 'Help', '/blog/how-we-built-it'])
+  for (const s of ['/about', '/payments-history', '/deleted-items', '/items/7?op=view', 'Help', '/blog/how-we-built-it', '/sessions/ends-soon', '/weekend'])
     assert.equal(isDestructive(s), false, s);
+});
+
+test('a browser error reaches a report as a clean message: no API prefix, no call log, no address', () => {
+  const cases = [['page.goto: net::ERR_ABORTED at http://127.0.0.1:4321/loop\nCall log:\n  - navigating to "http://127.0.0.1:4321/loop"', 'network error: aborted'],
+    ['page.goto: Timeout 30000ms exceeded.', 'no answer within 30 s'], ['apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:3000', 'network error: connection refused'],
+    ['locator.click: Element is not attached to the DOM', 'Element is not attached to the DOM'], ['Bad answer from http://localhost:3000/a?token=x at [::1]:8080', 'Bad answer from /a at (address)']];
+  for (const [raw, clean] of cases) assert.equal(cleanError(new Error(raw)), clean, raw);
 });
 
 test('the link check is GET-only, same-origin, never fetches a destructive URL and follows redirects through the same guard', async () => {

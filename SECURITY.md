@@ -59,17 +59,19 @@ The Codex connector makes outbound authenticated requests only. It creates a ded
 
 Webhook delivery state is saved atomically with the original ticket and retried through the existing instance's mutation queue. HTTPS, redirect refusal, bounded timeouts, optional HMAC signatures over the full timestamped JSON, stable event IDs, and receiver deduplication are required for reliable integrations. Delivery status/heartbeat/retry routes are admin-only and disclose no credential or receiver URL. Heartbeats expire after missed checks; they do not grant customer reporting access. Persistent custom adapters must retain the delivery field; one API writer per project still applies.
 
-## Page analysis, site crawl and agent connectors (0.6.0)
+## Page analysis, site crawl and agent connectors (0.6.0, unreleased)
 
 - **The browser probe never changes the site it measures.** `bugframe audit` and `bugframe crawl` run only against local
   addresses unless `--allow-remote` is given. Every non-GET request is aborted; forms, beacons and WebTransport are
   stopped; WebSockets are blocked in pages, iframes and dedicated Web Workers (a worker starts behind a stub that fails
   its sockets); SharedWorkers and workers started by a worker are not started at all, because Playwright cannot route
-  their requests; service workers, downloads and popups are off. Navigations are fetched one hop at a time, so a
-  redirect to another site or to a destructive-looking URL is refused before anything is requested there. Controls,
+  their requests; service workers, downloads and popups are off. Navigations and the page's own requests (fetch, XHR,
+  worker scripts) are fetched one hop at a time, so a redirect to another site or to a destructive-looking URL is
+  refused before anything is requested there. Controls,
   links and (once a click was dispatched) API calls whose label or URL looks destructive or session-ending are never
   clicked, opened or sent. If the guard itself fails on a request, the request is aborted. Limits: GET requests a click
-  fires to other URLs are sent (the probe cannot know what a GET does on a server), and the word list covers English,
+  fires to other URLs are sent (the probe cannot know what a GET does on a server), EventSource streams follow their
+  redirects in the browser (an endless stream cannot be fetched hop by hop), and the word list covers English,
   Portuguese and Spanish only; use a test account and data you can lose.
 - **Page-analysis results are untrusted text.** `audit.md` quotes the audited page. The inbox renders it from text
   nodes with a fixed tag list, takes no attribute from it and never makes a link or image live; the API serves it as

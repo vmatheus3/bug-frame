@@ -54,7 +54,7 @@ npx bugframe audit --watch --remote https://your-site.example/api/bugframe --pro
 
 It needs the private admin credential (`BUGFRAME_ADMIN_TOKEN`, or the credential file of the other remote commands;
 `--credentials FILE`), HTTPS (`--allow-localhost` permits HTTP to a loopback API for testing), and a server on 0.6.0
-or newer. What travels:
+(unreleased) or newer. What travels:
 
 | Step | Request | Limits on the server |
 |---|---|---|
@@ -127,7 +127,9 @@ machine: `--base-url` points the captured live URL at your local server, and the
    requests cannot be seen at all. `navigator.sendBeacon` and WebTransport send nothing (`BEACON`, `WEBTRANSPORT`);
    `submit` events are cancelled and `form.submit()` is replaced, so forms never reach the network. Navigations are
    fetched one hop at a time: a navigation or a redirect to another site or to a destructive-looking URL is aborted and
-   recorded (`NAVIGATE`, `REDIRECT <path> → <target>`), and nothing is requested from the other site.
+   recorded (`NAVIGATE`, `REDIRECT <path> → <target>`), and nothing is requested from the other site. Requests the
+   page fires (fetch, XHR) are fetched one hop at a time as well: a redirect to another site or a destructive-looking
+   URL is refused (`BLOCKED GET <target>`, with the hop it came from).
    `alert`/`confirm` dialogs are dismissed; popups and `window.open` pages are closed; downloads and service workers are
    off. EventSource streams are plain GETs and go through the same request guard. GET requests a click fires are sent,
    except API calls (fetch, XHR, EventSource) to a destructive-looking URL once a click was dispatched (`BLOCKED GET`).

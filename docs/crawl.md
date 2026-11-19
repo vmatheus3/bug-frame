@@ -119,7 +119,9 @@ The crawl uses the same guard code as `bugframe audit`:
   navigation is fetched one hop at a time, so a redirect is checked before it is followed: one that leaves the site
   (from the start URL, a link or a click) is recorded as `REDIRECT <path> → <full target>` and reported as an
   `offsite-redirect` finding; nothing is requested from the other site. A redirect that stays on the site is followed
-  as usual. Files a page loads from other hosts (fonts, scripts, images from a CDN) load normally.
+  as usual. Requests the page fires (fetch, XHR, while loading or after a click) are fetched hop by hop too: a redirect
+  to another site or to a destructive-looking URL is refused and recorded as `BLOCKED GET <target>` with the hop it
+  came from. Files a page loads from other hosts (fonts, scripts, images from a CDN) load normally.
 - **No writes:** every non-GET/HEAD request is aborted and recorded; form submissions are cancelled (and recorded as
   `FORM POST <action>` when the form has an action or uses POST); `navigator.sendBeacon` and WebTransport send
   nothing; downloads, popups and service workers are off. Playwright 1.48+ is required. **GET requests fired by a

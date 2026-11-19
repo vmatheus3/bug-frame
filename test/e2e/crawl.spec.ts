@@ -181,4 +181,38 @@ test.describe('crawl guard against a hostile site', () => {
     expect(ratchet.code).toBe(0); expect(ratchet.stdout).toMatch(/Since the baseline: 0 new, 1 known, 0 fixed/);
     expect((await crawl([...args, '--out', join(dir, 'out-bad'), '--baseline', join(dir, 'missing.json')])).code).toBe(2);
   });
+
+  test('a request the page fires is checked at every redirect hop: never into a session-ending URL or off the site', async () => {
+    test.setTimeout(180_000);
+    hostile.otherSeen.length = 0;
+    const out = join(dir, 'out-bounce');
+    const { stdout } = await crawl([`${hostile.base}/bounce`, '--out', out, '--viewports', '1280x800', '--max-pages', '3']);
+    expect(stdout).toContain('crawl.html');
+    const data = JSON.parse(readFileSync(join(out, 'crawl.json'), 'utf8'));
+    const requested = (p: string) => hostile.seen.some(r => r.path === p);
+    const edge = (label: string) => data.edges.find((e: Edge) => e.page === '/bounce' && e.label === label);
+    // The click's fetch and the 307 hop reached the site; the session-ending target and the other site never did.
+    expect(requested('/feed')).toBe(true); expect(requested('/feed-step')).toBe(true);
+    expect(requested('/api/session/end')).toBe(false);
+    expect(hostile.otherSeen).toEqual([]);
+    for (const [from, url, status, reason] of [['/boot', '/api/session/end', 302, 'a destructive-looking URL'], ['/feed', '/api/session/end', 302, 'a destructive-looking URL'], ['/feed-step', '/api/session/end', 302, 'a destructive-looking URL'], ['/feed-off', `${hostile.otherBase}/feed`, 302, 'another site']]) {
+      expect(data.blockedRequests, `${from} → ${url}`).toContainEqual({ method: 'BLOCKED GET', url, from, status, reason });
+    }
+    expect(edge('Refresh feed')).toMatchObject({ outcome: 'calls-backend' });
+    expect(edge('Refresh feed').calls).toEqual(['BLOCKED GET /api/session/end (redirect from /feed: a destructive-looking URL)', 'GET /feed']);
+    expect(edge('Refresh chain').calls.join()).toContain('BLOCKED GET /api/session/end (redirect from /feed-step');
+    expect(edge('Partner feed').calls.join()).toContain(`BLOCKED GET ${hostile.otherBase}/feed (redirect from /feed-off: another site)`);
+    // A linked page that redirects to itself is a redirect loop, reported with paths only: no browser error, no address.
+    expect(data.findings).toContainEqual(expect.objectContaining({ type: 'redirect-loop', title: '/loop redirects more than 5 times', pages: ['/loop'] }));
+    expect(data.findings.some((f: { type: string }) => f.type === 'broken-link')).toBe(false);
+    const text = JSON.stringify({ findings: data.findings, pages: data.pages, notes: data.notes });
+    expect(text).not.toMatch(/page\.goto|net::ERR/); expect(text).not.toContain(hostile.base); // the other site is named in full, by design
+    // The same loop as the start page.
+    const start = join(dir, 'out-loop');
+    await crawl([`${hostile.base}/loop`, '--out', start, '--viewports', '1280x800', '--no-click']);
+    const loop = JSON.parse(readFileSync(join(start, 'crawl.json'), 'utf8'));
+    expect(loop.pages[0]).toMatchObject({ path: '/loop', status: 302, blockedRedirect: { to: '/loop', reason: 'too many redirects' } });
+    expect(loop.findings.map((f: { type: string }) => f.type)).toEqual(['redirect-loop']);
+    expect(JSON.stringify({ findings: loop.findings, pages: loop.pages, notes: loop.notes })).not.toMatch(/page\.goto|net::ERR|127\.0\.0\.1/);
+  });
 });

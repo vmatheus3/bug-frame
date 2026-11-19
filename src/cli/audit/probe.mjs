@@ -11,7 +11,7 @@ export const DEFAULT_VIEWPORTS = '390x844,768x1024,1280x800,1440x900';
 const MAX_CLICKS = 40, MAX_LINKS = 30, NAV_TIMEOUT = 30_000;
 /** Labels and links never clicked or fetched (en/pt/es). Matched by isDestructive against the visible name, aria-label,
  *  title and the whole href (path and query). */
-export const DESTRUCTIVE = /\b(delete|remove|destroy|erase|wipe|purge|pay|payment|purchase|buy|checkout|place order|order now|subscribe|unsubscribe|log ?out|log ?off|sign ?out|sign ?off|end session|deactivate|close account|cancel (subscription|account|plan|order)|transfer|withdraw|refund|send money|reset|revoke|excluir|apagar|remover|deletar|pagar|comprar|finalizar compra|assinar|sair|deslogar|desconectar|desativar|(encerrar|terminar|finalizar|fechar) sess[aã]o|cancelar (assinatura|conta|plano|pedido)|transferir|sacar|reembolsar|eliminar|borrar|quitar|suscribirse|salir|desconectarse|(cerrar|finalizar|terminar) sesi[oó]n|darse de baja|cancelar suscripci[oó]n|retirar)\b/i;
+export const DESTRUCTIVE = /\b(delete|remove|destroy|erase|wipe|purge|pay|payment|purchase|buy|checkout|place order|order now|subscribe|unsubscribe|log ?out|log ?off|sign ?out|sign ?off|end session|session end|deactivate|close account|cancel (subscription|account|plan|order)|transfer|withdraw|refund|send money|reset|revoke|excluir|apagar|remover|deletar|pagar|comprar|finalizar compra|assinar|sair|deslogar|desconectar|desativar|(encerrar|terminar|finalizar|fechar) sess[aã]o|cancelar (assinatura|conta|plano|pedido)|transferir|sacar|reembolsar|eliminar|borrar|quitar|suscribirse|salir|desconectarse|(cerrar|finalizar|terminar) sesi[oó]n|darse de baja|cancelar suscripci[oó]n|retirar)\b/i;
 /** True when a label or URL holds a destructive word, including inside URL paths and queries and camelCase, kebab-case
  *  or snake_case names: "/items/8/deleteItem" and "/items/7?op=delete" both count. */
 export function isDestructive(text) {
@@ -34,6 +34,21 @@ const ASSET_TYPES = new Set(['script', 'stylesheet', 'image', 'font', 'media', '
 const loading = new WeakMap(), redirected = new WeakMap(), armed = new WeakSet();
 /** Record something the guard stopped. The time is kept off the JSON so a click can tell its own blocks from the page's. */
 const note = (blocked, entry) => { blocked.push(Object.defineProperty(entry, 't', { value: Date.now(), enumerable: false })); };
+/** One key per distinct blocked request: a redirect hop also counts where it came from. */
+export const blockKey = b => `${b.method} ${b.url}${b.from ? ` ← ${b.from}` : ''}`;
+/**
+ * A Playwright or network error as a short message for a report: no API prefix ("page.goto:"), no call log and no
+ * address (URLs become their path, host:port is dropped). Findings never quote the raw browser error.
+ */
+export function cleanError(e) {
+  const m = String(e?.message ?? e).split('\n')[0];
+  const ms = /Timeout (\d+)ms exceeded|timed out after (\d+) ?ms/i.exec(m);
+  if (ms) return `no answer within ${Math.round(Number(ms[1] ?? ms[2]) / 1000)} s`;
+  const net = /net::ERR_([A-Z_]+)/.exec(m)?.[1] ?? { ECONNREFUSED: 'CONNECTION_REFUSED', ECONNRESET: 'CONNECTION_RESET', ENOTFOUND: 'NAME_NOT_RESOLVED', ETIMEDOUT: 'TIMED_OUT', EHOSTUNREACH: 'ADDRESS_UNREACHABLE' }[/\b(E[A-Z]+)\b/.exec(m)?.[1]];
+  if (net) return `network error: ${net.toLowerCase().replace(/_/g, ' ')}`;
+  return scrub(m.replace(/^[\w.]+: /, '').replace(/\bhttps?:\/\/[^\s'")]+/g, u => { try { return new URL(u).pathname; } catch { return '(address)'; } })
+    .replace(/(?<![\w.])(?:\d{1,3}(?:\.\d{1,3}){3}|localhost|\[[\da-f:]+\])(?::\d+)?/gi, '(address)')).slice(0, 160);
+}
 
 /**
  * Runs first inside every dedicated worker the guard lets start. A worker's sockets are invisible to Playwright's
@@ -305,7 +320,7 @@ export async function guard(context, origin, blocked, target) {
     }
     if (method !== 'GET' && method !== 'HEAD') { note(blocked, { method, url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
     const marked = new RegExp(`[?&]${WORKER_MARK}=(classic|module)$`).exec(url.search);
-    if (marked) return guardedWorker(route, req.url().replace(new RegExp(`[?&]${WORKER_MARK}=(classic|module)(?=#|$)`), ''), marked[1], origin);
+    if (marked) return guardedWorker(route, req.url().replace(new RegExp(`[?&]${WORKER_MARK}=(classic|module)(?=#|$)`), ''), marked[1], origin, blocked);
     let page = null, main = false; try { const frame = req.frame(); page = frame.page(); main = frame === page.mainFrame(); } catch { /* a request without a frame */ }
     if (req.isNavigationRequest()) {
       if (url.origin !== origin || (req.url() !== target && isDestructive(url.pathname + url.search))) { note(blocked, { method: 'NAVIGATE', url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
@@ -313,16 +328,42 @@ export async function guard(context, origin, blocked, target) {
     }
     // After a click, a GET to /api/logout or /items/7/delete is as destructive as the button that would send it.
     if (page && armed.has(page) && !ASSET_TYPES.has(req.resourceType()) && isDestructive(url.pathname + url.search)) { note(blocked, { method: 'BLOCKED GET', url: pathOf(req.url(), origin) }); return route.abort('blockedbyclient'); }
-    return route.continue();
+    // Files to show load from anywhere. shortcut: an EventSource stream never ends, so it cannot be fetched whole here and
+    // the browser follows its redirects; upgrade when Playwright can fulfil a route with a streamed body.
+    if (ASSET_TYPES.has(req.resourceType()) || req.resourceType() === 'eventsource') return route.continue();
+    // Any other request (fetch, XHR, while loading or after a click) is fetched here one hop at a time, because the
+    // browser would follow a redirect without asking the route: each hop is checked before it is requested.
+    const res = await fetchHops(route, req.url(), origin, blocked);
+    return res ? route.fulfill({ response: res }) : route.abort('blockedbyclient');
   };
   // Fail closed: if the guard itself trips (a page closing mid-request, say), the request is aborted, never passed on.
   await context.route('**/*', route => handle(route).catch(() => route.abort('failed').catch(() => {})));
   context.on('page', async p => { if (await p.opener().catch(() => null)) p.close().catch(() => {}); });
 }
 
+/**
+ * Fetch a request one redirect hop at a time (Playwright shows a route only its first URL). A hop to another site, to a
+ * destructive-looking URL or past the fifth is recorded and refused (null), so nothing is requested there; otherwise
+ * the final response. A request that starts on another site may stay on that site.
+ */
+async function fetchHops(route, url, origin, blocked) {
+  const method = route.request().method(), sites = new Set([origin, new URL(url).origin]);
+  let at = new URL(url), res = await route.fetch({ url, maxRedirects: 0, timeout: NAV_TIMEOUT });
+  for (let hop = 0; ; hop++) {
+    const status = res.status(), location = res.headers().location;
+    if (status < 300 || status >= 400 || !location) return res;
+    let next; try { next = new URL(location, at); } catch { return res; }
+    const reason = !sites.has(next.origin) ? 'another site' : isDestructive(next.pathname + next.search) ? 'a destructive-looking URL' : hop >= 5 ? 'too many redirects' : null;
+    await res.dispose();
+    if (reason) { note(blocked, { method: `BLOCKED ${method}`, url: pathOf(next.href, origin), from: pathOf(at.href, origin), status, reason }); return null; }
+    res = await route.fetch({ url: next.href, maxRedirects: 0, timeout: NAV_TIMEOUT }); at = next;
+  }
+}
+
 /** Answer a marked worker script with "the socket stub first, then the real script" (same response headers). */
-async function guardedWorker(route, original, kind, origin) {
-  let res; try { res = await route.fetch({ url: original, timeout: NAV_TIMEOUT }); } catch { return route.abort('failed'); }
+async function guardedWorker(route, original, kind, origin, blocked) {
+  let res; try { res = await fetchHops(route, original, origin, blocked); } catch { return route.abort('failed'); }
+  if (!res) return route.abort('blockedbyclient');
   if (!res.ok()) return route.fulfill({ response: res });
   const body = kind === 'module' ? `import ${JSON.stringify(`${origin}${GUARD_PATH}/worker-prelude.js`)};import ${JSON.stringify(original)};` : `${WORKER_PRELUDE};importScripts(${JSON.stringify(original)});`;
   return route.fulfill({ response: res, body, contentType: 'text/javascript' });
@@ -344,14 +385,15 @@ async function guardedNavigation(route, req, { context, origin, blocked, target,
       const status = res.status(), location = res.headers().location;
       if (status < 300 || status >= 400 || !location) break;
       let next; try { next = new URL(location, at); } catch { break; }
-      const offsite = next.origin !== origin, reason = offsite ? 'another site' : next.href.split('#')[0] !== target && isDestructive(next.pathname + next.search) ? 'a destructive-looking URL' : hop >= 5 ? 'too many redirects' : null;
+      // load() opens each hop as its own navigation, so it keeps the count of hops across them.
+      const offsite = next.origin !== origin, reason = offsite ? 'another site' : next.href.split('#')[0] !== target && isDestructive(next.pathname + next.search) ? 'a destructive-looking URL' : (driven ? driven.hops : hop) >= 5 ? 'too many redirects' : null;
       if (reason) {
         const entry = { method: 'REDIRECT', url: pathOf(req.url(), origin), to: pathOf(next.href, origin), status, reason };
         note(blocked, entry); if (driven) driven.blocked = entry;
         await res.dispose(); return route.abort('blockedbyclient');
       }
       await res.dispose();
-      if (driven) { driven.next = next.href; return route.abort('aborted'); }
+      if (driven) { driven.hops++; driven.next = next.href; return route.abort('aborted'); }
       res = await context.request.get(next.href, { maxRedirects: 0, timeout: NAV_TIMEOUT, failOnStatusCode: false });
       at = next; if (main) redirected.set(page, next.href);
     }
@@ -396,16 +438,19 @@ export function watch(page, origin) {
 
 /**
  * Open `url` and wait for it to settle. Under the guard a redirect comes back one hop at a time: a safe one is opened
- * as the next navigation, one that leaves the site (or looks destructive) throws with `blockedRedirect` set.
+ * as the next navigation; one that leaves the site, looks destructive or is the sixth in a row throws with
+ * `blockedRedirect` set.
  */
 export async function load(page, url, timeout = NAV_TIMEOUT) {
   let response, next = url;
-  for (let hop = 0; ; hop++) {
-    const state = {}; loading.set(page, state);
+  const state = { hops: 0 };
+  for (;;) {
+    Object.assign(state, { seen: false, next: null }); loading.set(page, state);
     try { response = await page.goto(next, { waitUntil: 'load', timeout }); break; }
     catch (e) {
-      if (state.blocked) throw Object.assign(new Error(`redirects to ${state.blocked.reason} (${state.blocked.to}); not followed`), { blockedRedirect: state.blocked });
-      if (!state.next || hop >= 6) throw e;
+      const b = state.blocked;
+      if (b) throw Object.assign(new Error(b.reason === 'too many redirects' ? `redirects more than 5 times (${b.to}); not followed` : `redirects to ${b.reason} (${b.to}); not followed`), { blockedRedirect: b });
+      if (!state.next) throw e;
       next = state.next;
     } finally { loading.delete(page); }
   }
@@ -449,7 +494,7 @@ export async function probePage({ url, viewports = parseViewports(), click = tru
           if (skipped) probe.notes.push(`${skipped} link(s) were not checked because their text or URL looks destructive.`);
         }
         if (scheme === 'light') candidatesBy.set(vp.name, marked(res.candidates));
-      } catch (e) { if (signal?.aborted) throw e; probe.notes.push(`${name}: the page could not be measured (${scrub(String(e?.message ?? e).split('\n')[0])}).`); }
+      } catch (e) { if (signal?.aborted) throw e; probe.notes.push(`${name}: the page could not be measured (${cleanError(e)}).`); }
       finally { await context.close(); }
     }
     if (!probe.viewports.length) throw new CliError(`The page did not load at any viewport: ${probe.notes[0] ?? url}`);
@@ -461,7 +506,7 @@ export async function probePage({ url, viewports = parseViewports(), click = tru
       await guard(context, origin, blocked, target.href.split('#')[0]);
       for (const link of probe.links) {
         stopped();
-        try { Object.assign(link, await checkLink(context.request, link.href, origin)); } catch (e) { link.status = null; link.error = String(e?.message ?? e).split('\n')[0].slice(0, 80); }
+        try { Object.assign(link, await checkLink(context.request, link.href, origin)); } catch (e) { link.status = null; link.error = cleanError(e); }
         link.url = pathOf(link.href, origin); delete link.href;
         if (link.skipped) { blocked.push({ method: 'GET', url: link.url }); continue; }
         if (link.status === null || link.status >= 400) raw.push({ type: 'broken-link', severity: 'medium', selector: link.selector, title: `Link to ${link.url} is broken`, evidence: `GET ${link.url} → ${link.status ?? link.error}`, measured: { status: link.status }, viewport: `${vp.name} light` });
@@ -493,7 +538,7 @@ export async function probePage({ url, viewports = parseViewports(), click = tru
   merge('failed-request', r => (r.status === null || r.status >= 500 ? 'high' : 'medium'), r => `${r.method} ${r.url} ${r.status}`, r => `${r.method} ${r.url} fails${r.status ? ` with ${r.status}` : ''}`, r => `${r.method} ${r.url} → ${r.status ?? r.error}`, all('failed'));
 
   const seenBlocked = new Set();
-  for (const b of blocked) { const k = `${b.method} ${b.url}`; if (!seenBlocked.has(k) && seenBlocked.size < 50) { seenBlocked.add(k); probe.blockedRequests.push(b); } }
+  for (const b of blocked) { const k = blockKey(b); if (!seenBlocked.has(k) && seenBlocked.size < 50) { seenBlocked.add(k); probe.blockedRequests.push(b); } }
   const unclear = probe.clicks.filter(c => c.outcome?.startsWith('unclear')).length;
   if (unclear) probe.notes.push(`${unclear} control(s) could not be judged: the page keeps changing on its own (polling, timers), so a click with no effect of its own cannot be told apart from a dead one.`);
   if (probe.blockedRequests.length) probe.notes.push(`The audit blocks every non-GET request: ${probe.blockedRequests.length} distinct request(s) were not sent (see blockedRequests). Content that depends on them may look empty or show an error state.`);
@@ -564,13 +609,13 @@ export async function clickOne({ context, url, c, n, outDir, evidencePrefix, ori
       await page.waitForTimeout(settleMs);
     }
     const was = await page.evaluate(OVERLAY_STATE, c.selector).catch(() => null);
-    const t0 = Date.now(), blockKey = b => `${b.method} ${b.url}`;
+    const t0 = Date.now();
     const base = { keys: new Set(pageLog.events.filter(e => e.t >= t0 - settleMs).map(e => `${e.kind} ${e.key}`)), blocks: new Set(blocked.filter(b => (b.t ?? 0) >= t0 - settleMs).map(blockKey)) };
     const noisyNodes = await page.evaluate(MARK_BASELINE, settleMs).catch(() => 0);
     const before = { url: page.url(), blocked: blocked.length, dialogs: pageLog.dialogs };
     armed.add(page);
     let clickError = '';
-    try { await el.click({ timeout: 3000 }); } catch (e) { clickError = String(e?.message ?? e).split('\n')[0].slice(0, 160); }
+    try { await el.click({ timeout: 3000 }); } catch (e) { clickError = `the control could not be clicked (${cleanError(e)})`; }
     await page.waitForTimeout(settleMs);
     await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
     const changes = await page.evaluate(COUNT_CHANGES).catch(() => null);
@@ -588,7 +633,7 @@ export async function clickOne({ context, url, c, n, outDir, evidencePrefix, ori
     const background = base.keys.size > 0 || base.blocks.size > 0 || noisyNodes > 0 || (changes?.background ?? 0) > 0;
     const effects = { domChanged: changes === null ? null : changes.own > 0, navigated: moved ? pathOf(landed, origin) : false, anchor: anchor ? hash : false, dialog: pageLog.dialogs > before.dialogs,
       requestsAttempted: of('request').length, formSubmitIntercepted: submits > 0, popup: popups[0] ?? false,
-      blockedRequests: blockedNow.map(b => `would have sent ${b.method} ${b.url}${b.method === 'REDIRECT' ? ` → ${b.to} (${b.reason})` : ''}`),
+      blockedRequests: blockedNow.map(b => `would have sent ${b.method} ${b.url}${b.method === 'REDIRECT' ? ` → ${b.to} (${b.reason})` : b.from ? ` (redirect from ${b.from}: ${b.reason})` : ''}`),
       consoleErrors: of('console').filter(real).map(e => e.key), pageErrors: of('pageerror').filter(real).map(e => e.key),
       // A dialog, menu or popover appeared, or the control reports itself expanded; focus moved somewhere else.
       opened: Boolean(after && was && (after.overlays > was.overlays || (after.expanded === 'true' && was.expanded !== 'true'))),
@@ -606,6 +651,6 @@ export async function clickOne({ context, url, c, n, outDir, evidencePrefix, ori
     if (errored) raw.push({ type: 'click-error', severity: 'high', selector: c.selector, title: `Clicking "${c.label || c.tag}" raises an error`, evidence: [...effects.pageErrors, ...effects.consoleErrors, ...effects.failedRequests][0], viewport: where, screenshot });
     if (clickError) raw.push({ type: 'dead-control', severity: 'medium', selector: c.selector, title: `"${c.label || c.tag}" cannot be clicked`, evidence: clickError, viewport: where, screenshot });
     return { ...record, outcome, effects, ...(screenshot ? { screenshot } : {}) };
-  } catch (e) { return { ...record, outcome: 'probe error', error: scrub(String(e?.message ?? e).split('\n')[0]) }; }
+  } catch (e) { return { ...record, outcome: 'probe error', error: cleanError(e) }; }
   finally { context.off('page', onPage); await page.close().catch(() => {}); }
 }
