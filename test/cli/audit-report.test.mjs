@@ -75,3 +75,14 @@ test('the probe-only report always passes its own validator, with and without fi
   assert.deepEqual(counts, { blocker: 0, high: 1, medium: 1, low: 0 }); assert.match(note, /^Page analysis: 1 high, 1 medium\. Top: F1 /);
   assert.match(summaryNote(md, { degraded: true }).note, /probe-only/);
 });
+
+test('a field may continue on indented lines below its label (a numbered fix list is a fix)', () => {
+  // A real Claude audit of a 26-finding page was thrown away for this alone: `- Fix:` followed by "  1. ..." lines (2026-11-18).
+  const multi = GOOD.replace('- Fix: bind on the container', '- Fix:\n  1. Bind the handler on the container.\n  2. Add a test that clicks #checkout.');
+  const r = validateAuditMarkdown(multi);
+  assert.equal(r.ok, true, r.errors.join('; '));
+  assert.match(r.findings[0].fields.Fix, /^1\. Bind the handler on the container\. 2\. Add a test/);
+  // an empty label with nothing indented below it is still missing
+  const empty = GOOD.replace('- Fix: bind on the container', '- Fix:');
+  assert.deepEqual(validateAuditMarkdown(empty).errors, ['F1: missing "- Fix:"']);
+});

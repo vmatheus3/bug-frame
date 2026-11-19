@@ -17,7 +17,8 @@ export function parseFindings(md) {
   heads.forEach((h, i) => {
     const block = md.slice(h.end, i + 1 < heads.length ? heads[i + 1].start : md.search(/^## Fix list/m) > h.end ? md.search(/^## Fix list/m) : md.length);
     const fields = {};
-    for (const f of FIELDS) { const v = new RegExp(`^- ${f}:[ \\t]*(.+)$`, 'm').exec(block); if (v) fields[f] = one(v[1]); }
+    // A value may sit on the label's line and/or continue on indented lines below it (models write numbered fix lists).
+    for (const f of FIELDS) { const v = new RegExp(`^- ${f}:[ \\t]*(.*)$((?:\\n[ \\t]+\\S.*$)*)`, 'm').exec(block); if (v && one(v[1] + v[2])) fields[f] = one(v[1] + v[2]); }
     out.push({ id: h.id, title: h.title, fields });
   });
   return out;

@@ -77,7 +77,7 @@ export class CodexClient {
     });
   }
   async initialize() {
-    await this.request('initialize', { clientInfo: { name: 'bugframe', title: 'Bugframe notifications', version: '0.6.1' } });
+    await this.request('initialize', { clientInfo: { name: 'bugframe', title: 'Bugframe notifications', version: '0.6.2' } });
     this.write({ method: 'initialized', params: {} });
     const account = await this.request('account/read', { refreshToken: false });
     if (account.requiresOpenaiAuth && !account.account) throw new CliError('Sign into the Codex CLI with codex login, then reconnect.');

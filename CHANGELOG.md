@@ -5,6 +5,14 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-18
+
+### Fixed
+- Page analysis threw away good auditor reports: a finding field written as a label with the value on indented lines
+  below it (a numbered **Fix** list, for example) counted as missing, so the whole Claude report was replaced by the
+  probe-only one. Fields now continue on indented lines. Found on a real 26-finding audit whose report, with `file:line`
+  causes, now validates.
+
 ## [0.6.1] - 2026-11-18
 
 ### Fixed
