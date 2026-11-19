@@ -66,3 +66,16 @@ test('a real probe-only audit.md renders with one table row per finding, and hug
   assert.ok(find(big, 'li').length <= 4000, 'the number of blocks is capped');
   assert.match(textOf(big), /shortened/);
 });
+
+test('inline code: matched runs become code, an unmatched run stays text, and a megabyte of backticks is linear', () => {
+  assert.deepEqual(parseInline('run `npm test` now'), [{ type: 'text', text: 'run ' }, { type: 'code', text: 'npm test' }, { type: 'text', text: ' now' }]);
+  assert.deepEqual(parseInline('``a ` b`` and `c`'), [{ type: 'code', text: 'a ` b' }, { type: 'text', text: ' and ' }, { type: 'code', text: 'c' }]);
+  assert.deepEqual(parseInline('a ``` b'), [{ type: 'text', text: 'a ``` b' }], 'a run with no closing match is plain text');
+  assert.deepEqual(parseInline('``x` **y**'), [{ type: 'text', text: '``x` ' }, { type: 'strong', text: 'y' }], 'text after an unmatched run is still parsed');
+  const ticks = `a${'`'.repeat(1_000_000)}`;
+  for (const source of [ticks, '`a'.repeat(500_000)]) {
+    const t = performance.now(); parseInline(source); const ms = performance.now() - t;
+    assert.ok(ms < 200, `${source.slice(0, 4)}…: ${Math.round(ms)} ms`);
+  }
+  assert.equal(parseInline(ticks).map(p => p.text).join(''), ticks, 'nothing is lost');
+});

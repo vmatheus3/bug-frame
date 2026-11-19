@@ -53,6 +53,9 @@ describe('accessibility', () => {
     make(); const fab = q<HTMLButtonElement>('.fab')!; expect(fab.getAttribute('aria-haspopup')).toBe('dialog'); expect(fab.getAttribute('aria-expanded')).toBe('false');
     fab.click(); expect(q('.fab')!.getAttribute('aria-expanded')).toBe('true'); expect(shadow().activeElement?.classList.contains('main')).toBe(true);
     q('.fab-wrap')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(q('.menu')).toBeNull();
+    expect(shadow().activeElement?.classList.contains('fab')).toBe(true); // focus returns to the round button that opened it
+    q<HTMLButtonElement>('.fab')!.click(); q<HTMLButtonElement>('.fab')!.click(); expect(q('.menu')).toBeNull();
+    expect(shadow().activeElement?.classList.contains('fab')).toBe(true); // closing it with the same button keeps focus there
   });
   it('the round menu button shows a bug drawing, never the three-line menu icon', () => {
     make(); const svg = q('.fab svg')!;

@@ -357,14 +357,16 @@ class Bugframe implements BugframeInstance {
     const fab = h('button', { type: 'button', class: 'fab', 'aria-label': t.menuMine, 'aria-haspopup': 'dialog', 'aria-expanded': String(this.menu), disabled: busy });
     fab.append(icon(busy ? ICON_SPIN : ICON_INSECT));
     if (open > 0 && !busy) fab.append(h('b', { class: 'count', 'aria-label': t.openCount.replace('{n}', String(open)) }, String(open)));
-    fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else this.restoreFocus(); });
+    // Closing the popover returns focus to this round button, the one that opened it.
+    const refocus = () => this.root?.querySelector<HTMLElement>('.fab')?.focus();
+    fab.addEventListener('click', () => { this.menu = !this.menu; this.notice = ''; this.render(); if (this.menu) { void this.loadReports(); this.root?.querySelector<HTMLElement>('.menu .main')?.focus(); } else refocus(); });
     const start = h('button', { type: 'button', class: 'feedback-start', disabled: busy }, icon(busy ? ICON_SPIN : ICON_BUG), t.button);
     start.addEventListener('click', () => void this.begin());
     wrap.append(start, fab);
     if (this.error && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'alert' }, this.error));
     else if (this.notice && this.phase === 'idle') wrap.append(h('p', { class: 'toast', role: 'status' }, this.notice));
     if (this.menu) wrap.append(this.renderMenu());
-    wrap.addEventListener('keydown', e => { if (e.key === 'Escape' && this.menu) { this.menu = false; this.render(); this.restoreFocus(); } });
+    wrap.addEventListener('keydown', e => { if (e.key === 'Escape' && this.menu) { this.menu = false; this.render(); refocus(); } });
     return wrap;
   }
 

@@ -18,6 +18,7 @@ export function parseInline(source) {
       let run = 1; while (s[i + run] === '`') run++;
       const fence = '`'.repeat(run), end = s.indexOf(fence, i + run);
       if (end > i) { push('code', s.slice(i + run, end).trim()); i = end + run; continue; }
+      plain += fence; i += run; continue; // no closing run: the whole run is text (rescanning its tail would be quadratic)
     }
     if (ch === '*' && s[i + 1] === '*') { const end = s.indexOf('**', i + 2); if (end > i + 2) { push('strong', unescape(s.slice(i + 2, end))); i = end + 2; continue; } }
     if (ch === '*' && s[i + 1] !== undefined && !/[\s*]/.test(s[i + 1])) { const end = s.indexOf('*', i + 1); if (end > i + 1 && !/\s/.test(s[end - 1])) { push('em', unescape(s.slice(i + 1, end))); i = end + 1; continue; } }

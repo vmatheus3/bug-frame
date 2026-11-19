@@ -157,7 +157,18 @@ their kind as JSON on stdin (`{ "endpoint": "…", "reports": [{ "id": "bug-…"
 `BUGFRAME_REPORT_IDS` (space separated), `BUGFRAME_REPORT_COUNT` and `BUGFRAME_API`. It never gets a customer's text
 (untrusted, it stays in Bugframe until your agent asks for it) and never the private credential: give your agent its own
 access if it should read the tickets. Exit code 0 acknowledges the batch; any other exit code, or no answer within ten
-minutes, keeps those tickets queued for the next check.
+minutes, keeps those tickets queued for the next check. Ctrl+C stops the listener and a command still running, with
+everything it started; the listener prints which tickets were interrupted, and they stay queued.
+
+The `bugframe --remote … show` in the example works only if the agent can read a credential file: the listener removes
+every `BUGFRAME_*` variable it did not set (`BUGFRAME_ADMIN_TOKEN` and `BUGFRAME_CREDENTIALS_FILE` included) from the
+command's environment. Put the admin token in the default file, readable only by your user (the CLI refuses any other):
+
+```bash
+mkdir -p ~/.config/bugframe && chmod 700 ~/.config/bugframe
+touch ~/.config/bugframe/credentials.json && chmod 600 ~/.config/bugframe/credentials.json
+# then write { "adminToken": "your-private-key" } into it with your editor (keep it out of shell history)
+```
 
 ![Terminal: bugframe connect agent runs a command for the waiting requests and prints what the command received: the API address and four ticket ids with their kinds, never their text](docs/images/connect-agent.png)
 
@@ -601,7 +612,7 @@ It lists the queue, claims a request, measures the page on your machine and uplo
 an admin-only route (`PUT /reports/:id/audit.md`): page-analysis requests only, exactly those two names, Markdown text
 or JSON, at most 2 MB, refused for any other account, kind or file and for cross-origin browsers. It needs the private
 admin credential (`BUGFRAME_ADMIN_TOKEN` or the credential file, as for the other remote commands) and a server on
-0.6.0 or newer; with Next.js-style route files, export `PUT` next to `GET`, `POST` and `PATCH`.
+0.6.0 (unreleased) or newer; with Next.js-style route files, export `PUT` next to `GET`, `POST` and `PATCH`.
 
 **Local pages only.** The audit loads the page and clicks its controls, so it refuses any page that is not on your
 machine: only `localhost`, `*.localhost`, `*.test`, `127.0.0.0/8`, `::1` and `0.0.0.0` count as local. Private LAN
@@ -638,8 +649,8 @@ page. Every non-GET request is aborted and recorded ("would have sent POST /api/
 and recorded in pages, iframes and Web Workers (a dedicated worker starts behind a stub that fails its sockets; a
 SharedWorker, or a worker started by a worker, is not started at all, because its requests cannot be guarded); beacons
 and WebTransport are blocked, forms never reach the network, downloads and service workers are off, popups are closed,
-dialogs are dismissed. Navigations are fetched one hop at a time: a navigation or redirect to another site, or to a
-destructive-looking URL, is aborted and recorded with its full target. Controls whose name, `aria-label`, `title` or
+dialogs are dismissed. Navigations and the page's own requests (fetch, XHR) are fetched one hop at a time: a navigation
+or redirect to another site, or to a destructive-looking URL, is aborted and recorded with its full target. Controls whose name, `aria-label`, `title` or
 whole link URL (path and query, split at camelCase, `-` and `_`, so `/items/8/deleteItem` and `/items/7?op=delete`
 count) says *delete, remove, pay, purchase, log out, log off, sign out, sign off, end session, cancel subscription*
 (and the Portuguese and Spanish equivalents: *sair, encerrar sessão, salir, cerrar sesión, …*) are never clicked, and

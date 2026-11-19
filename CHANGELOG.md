@@ -47,6 +47,11 @@ Planned for 0.6.0.
   - A dead `href="#"` link was reported as navigating to its own page; it is dead. A working in-page anchor is not flagged.
   - A page that polls or shows a clock turned a button without a handler into `calls-backend` or `changes`. What the page does by itself is measured in the window before the click and subtracted; a click with no effect of its own there is `unknown` (*unclear* in `audit`), never dead and never working. A fetch that fails because the guard blocked it no longer counts as an error of the click.
   - If the guard itself fails on a request, the request is aborted instead of passed on.
+  - A request the page fired (a click's `fetch('/feed')`, or one made while loading) followed its redirects unchecked, because Playwright shows a route only its first URL: `/feed` → 302 `/api/session/end` reached the server. Such requests (fetch, XHR, worker scripts) are now fetched one hop at a time; a hop to another site, to a destructive-looking URL (now also `session end`) or past the fifth is refused and recorded as `BLOCKED GET <target>` with the hop it came from. EventSource streams still follow their redirects in the browser (a stream never ends, so it cannot be fetched whole).
+  - A start page or a linked page that redirects to itself was reported as a broken link with Playwright's raw error and the local address. It is now a `redirect-loop` finding with paths only, and no finding quotes a raw browser error (`page.goto: net::ERR_…`): errors are reduced to short messages without addresses.
+- The inbox's report renderer took quadratic time on a long run of backticks with no closing run (100,000 backticks: 8 s); an unmatched run is now text in one step.
+- `connect agent`: Ctrl+C now stops a running agent command with its whole process group at once (it used to wait up to ten minutes) and says which tickets were interrupted; they stay queued.
+- Widget: Escape (or the round button) closing the menu popover returns focus to the round button that opened it, not to the feedback button.
 - `crawl.html`: the severity, type, page and search filters updated the counter but hid nothing (the card's `display: grid` overrode the `hidden` attribute).
 - The SvelteKit snippet in `examples/vue-svelte` was not valid JavaScript; the static-download example pointed at an old release.
 

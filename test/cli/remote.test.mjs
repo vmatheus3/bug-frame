@@ -276,3 +276,28 @@ test('connect agent: any command gets the new ticket ids, never their text or th
     assert.deepEqual(said, ['triaged 2']);
   } finally { if (previous === undefined) delete process.env.BUGFRAME_ADMIN_TOKEN; else process.env.BUGFRAME_ADMIN_TOKEN = previous; await cleanup(dir); }
 });
+
+test('connect agent: Ctrl+C stops a running agent command with everything it started and says what was interrupted', async () => {
+  const { connectCodex, AgentCommandClient } = await import('../../src/cli/codex.mjs');
+  const { existsSync, readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { setTimeout: sleep } = await import('node:timers/promises');
+  const until = async (check, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await check()) return true; await sleep(50); } return false; };
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  const dir = await tmpDir(), pidFile = join(dir, 'pids.json'), controller = new AbortController(), said = [], logged = [];
+  const hang = `"${process.execPath}" "${fileURLToPath(new URL('../fixtures/fake-auditor.mjs', import.meta.url))}" hang`;
+  process.env.HANG_PID_FILE = pidFile;
+  try {
+    const run = connectCodex({ endpoint: config.endpoint, token: config.token, project: dir, stateDir: join(dir, 'state'), includeExisting: true, list: async () => [{ id, kind: 'bug' }], heartbeat: async () => {}, log: text => logged.push(text), signal: controller.signal,
+      clientFactory: () => new AgentCommandClient({ command: hang, project: dir, signal: controller.signal, say: text => said.push(text) }) });
+    assert.ok(await until(() => existsSync(pidFile)), 'the agent command started');
+    const started = Date.now(); controller.abort();
+    const state = await run;
+    assert.ok(Date.now() - started < 5000, 'the listener stops at once instead of waiting for the command');
+    assert.deepEqual(state.seen, [], 'the interrupted batch is not acknowledged');
+    const pids = JSON.parse(readFileSync(pidFile, 'utf8'));
+    assert.ok(await until(() => !pids.some(alive)), `processes still alive: ${pids.filter(alive)}`);
+    assert.deepEqual(said, [`Stopped the agent command that was running for ${id}. Those tickets stay queued and are sent again on the next run.`]);
+    assert.ok(!logged.some(l => /temporarily unavailable/.test(l)), logged.join('\n'));
+  } finally { delete process.env.HANG_PID_FILE; await cleanup(dir); }
+});

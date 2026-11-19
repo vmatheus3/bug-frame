@@ -119,8 +119,8 @@ async function main(argv) {
   if (cmd === 'connect') {
     if (!['codex', 'agent'].includes(arg) || !values.remote || values.dir) throw new CliError('Use connect codex --remote HTTPS_API_URL --project PROJECT_FOLDER, or connect agent --remote HTTPS_API_URL --project PROJECT_FOLDER --agent-cmd "COMMAND".');
     if ((arg === 'agent') !== Boolean(values['agent-cmd'])) throw new CliError(arg === 'agent' ? 'connect agent needs --agent-cmd "COMMAND": the command to run for each batch of new tickets.' : '--agent-cmd belongs to connect agent.');
-    const clientFactory = arg === 'agent' ? () => new AgentCommandClient({ command: values['agent-cmd'], project: resolve(values.project ?? '.') }) : undefined;
     const token = await remoteCredentials(values.credentials), controller = new AbortController();
+    const clientFactory = arg === 'agent' ? () => new AgentCommandClient({ command: values['agent-cmd'], project: resolve(values.project ?? '.'), signal: controller.signal }) : undefined;
     const stop = () => controller.abort(); process.once('SIGINT', stop); process.once('SIGTERM', stop);
     try { await connectCodex({ endpoint: values.remote, token, project: values.project, stateDir: values['state-dir'], intervalMs: Number(values.interval ?? 5000), once: values.once, includeExisting: values['include-existing'], allowInsecureLocalhost: values['allow-localhost'], signal: controller.signal, clientFactory }); return null; }
     finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
